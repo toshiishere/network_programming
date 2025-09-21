@@ -24,17 +24,18 @@ int main(){
     //create socket
     //create ip
     //bind
-    //connect
-    //choose login or register
-    //type in name and passwd
+    //connect to server
+
+    //create a udp port
+    //choose login or register with username and passwd
+    //syntax: "[lr] {username} {passwd} {port}"
     //wait for confirm from server
 
-    //setup udp listening server
     while(1){
         //state 1:idle
         //either send request or wait for request or quit
         //state 2:in game
-        //who ever do listen+accept become the host.
+        //who ever do send_invitation&TCP_info and listen&accept become the host.
         //handles game. when done, return result to the server side.
     }
 }
