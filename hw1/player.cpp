@@ -11,6 +11,7 @@
 #include <fstream>
 #include <map>
 #include <set>
+#include <sstream>
 #include "game.h"
 
 const int PORT=45632;
@@ -21,26 +22,19 @@ using namespace std;
 char buf[4096];
 string username,passwd,_,opponent_username;
 
-struct player{
-    string name;
-    int port;
-};
 //create vector of live player
-map<player, int> logined_players;//username, port
+map<string, int> logined_players;//username, port
 
-int request_logined_players(int serverfd){
+int request_logined_players(int lobbyfd){
     logined_players.clear();
-    send(serverfd, "r", 2, 0);
-    int byteRecv=recv(serverfd, buf, sizeof(buf) ,0);
+    send(lobbyfd, "r", 2, 0);
+    int byteRecv=recv(lobbyfd, buf, sizeof(buf) ,0);
     buf[byteRecv]='\0';
     string recved=string(buf,0,byteRecv), user;
     int port;
     stringstream ss(recved);
-    while(ss>>user>>port){
-        player p;
-        p.name=user;
-        p.port=port;
-        logined_players.insert(p);
+    while (ss >> user >> port) {
+        logined_players[user] = port;   // <-- correct
     }
     return 0;
 }
@@ -96,7 +90,7 @@ int main(){
         stringstream ss(input);
         ss >> _ >> username >> passwd;
 
-        input.append(" "+udpPort);
+        input += " " + to_string(udpPort);
         send(lobbyfd,input.c_str(),input.size(),0);
         //syntax: "[lr] {username} {passwd} {port}"
         //wait for confirm from server
@@ -148,14 +142,14 @@ int main(){
                 }
                 close(listening);
             }
-            else{
+            else{//ingame == 2
                 int opponent_fd = socket(AF_INET, SOCK_STREAM, 0);
                 if (opponent_fd == -1) {
                     cerr << "Failed to create socket\n";
                     return -1;
                 }
                 
-                if (inet_pton(AF_INET, opponent.c_str(), &opponent.sin_addr) <= 0) {
+                if (inet_pton(AF_INET, IP, &opponent.sin_addr) <= 0) {
                     cerr << "Invalid IP address\n";
                     return -2;
                 }
@@ -175,7 +169,7 @@ int main(){
                 result=client_game();
             }
             sendResult=(result?username:opponent_username)+" "+(result?opponent_username:username)+"\n";
-            send(lobbyfd,sendResult.c_str,sendResult.size(),0);
+            send(lobbyfd,sendResult.c_str(),sendResult.size(),0);
             ingame=0;
         }
         //state 1:idle
@@ -190,15 +184,17 @@ int main(){
                 if(FD_ISSET(i,&readfd)){
                     if(i==0){//player cin I/O
                         string input;
-                        if (getline(cin,input)) {
+                        if (!getline(cin,input)) {
                             cout << "EOF on stdin, closing\n";
                             break;
                         }
                         if(input=="r"){
                             request_logined_players();
                             //TODO print all the player except myself
+                            cout<<"here's the available players"<<endl;
                             for(auto t:logined_players){
-
+                                if(t.first==username)continue;
+                                cout<<t.first<<endl;
                             }
                         }
                         else if(input[0]=='i'){
@@ -213,17 +209,50 @@ int main(){
                                 continue;
                             }
                             //found player to play
-                            opponent.port=logined_players[input].port;
+                            opponent.sin_family = AF_INET;
+                            opponent.sin_port = htons(logined_players[input].port);
+                            inet_pton(AF_INET, IP, &opponent.sin_addr);
+
+                            string invitation = "I " + to_string(udpPort)+" " + username;
+                            sendto(udpsockfd,invitation.c_str(),invitation.size(),0,(sockaddr*)&opponent,sizeof(opponent));
+                            //send invitation through udp
+
+                            //wait for acceptence
+                            int byteRecv=recv(udpsockfd,buf,sizeof(buf),0);
+                            buf[byteRecv]='\0';
+                            if(buf[0]!='Y')continue;//invitation rejected, discarded
+
+                            string tcpinfo = to_string(ntohs(server.sin_port()));
+                            sendto(udpsockfd,tcpinfo.c_str(),tcpinfo.size(),0,(sockaddr*)&opponent,sizeof(opponent));
                         }
                         else{
                             cout<<"wrong syntax, error"<<endl;
                             continue;
                         }
-                        send(udpsockfd,)
                         ingame=1;
                     }
                     else if(i==udpsockfd){//invitation from another player
                         //update opponent
+                        int byteRecv=recv(udpsockfd,buf,sizeof(buf),0);
+                        string msg(buf,0,byteRecv);
+                        stringstream ss(msg);
+                        ss>>_>>_>>opponent_username;
+                        opponent.sin_family=AF_INET;
+                        opponent.sin_port=htons(stoi(_));
+                        inet_pton(AF_INET, IP, opponent.sin_addr);
+                        cout<<"invitation from player "<<opponent_username<<", do you accept? [y|n]";
+                        cin>>_;
+                        if(_!="y"){
+                            sendto(udpsockfd,"N", 2, 0, (sockaddr*)&opponent, sizeof(opponent));
+                            cout<<"rejecting invitation"<<endl;
+                            continue;
+                        }
+                        sendto(udpsockfd,"Y", 2, 0, (sockaddr*)&opponent, sizeof(opponent));
+
+                        int byteRecv=recv(udpsockfd,buf,sizeof(buf),0);
+                        string msg(buf,0,byteRecv);
+                        opponent.sin_port=htons(stoi(msg));
+
                         ingame=2;
                     }
                 }
