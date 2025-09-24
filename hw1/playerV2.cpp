@@ -67,6 +67,7 @@ int scan_for_player(int udpsock){
 
     // 1) blast messages to all ports
     for (int p = MINUDPPORT; p <= MAXUDPPORT; ++p) {
+        if(p==udpsock)continue;
         dest.sin_port = htons(p);
         ssize_t sent = sendto(udpsock, msg, strlen(msg), 0, (sockaddr*)&dest, sizeof(dest));
         if (sent < 0) {
@@ -87,7 +88,7 @@ int scan_for_player(int udpsock){
         tv.tv_sec = remaining_ms / 1000;
         tv.tv_usec = (remaining_ms % 1000) * 1000;
 
-        int rv = select(sock + 1, &readfds, nullptr, nullptr, &tv);
+        int rv = select(udpsock + 1, &readfds, nullptr, nullptr, &tv);
         if (rv < 0) {
             perror("select");
             break;
@@ -95,28 +96,30 @@ int scan_for_player(int udpsock){
             // timeout: no more data
             break;
         }
-
-        if (FD_ISSET(sock, &readfds)) {
+        if (FD_ISSET(udpsock, &readfds)) {
             char buf[2048];
             sockaddr_in from{};
             socklen_t fromlen = sizeof(from);
-            ssize_t n = recvfrom(sock, buf, sizeof(buf)-1, 0, (sockaddr*)&from, &fromlen);
+            ssize_t n = recvfrom(udpsock, buf, sizeof(buf)-1, 0, (sockaddr*)&from, &fromlen);
+            logined_players.clear();
             if (n > 0) {
                 buf[n] = '\0';
                 int fromPort = ntohs(from.sin_port);
-                replies.emplace_back(fromPort, string(buf, n));
+                string name(strchr(buf,' '));
+                logined_players[name]=fromPort;
             }
         }
-
         auto now = chrono::steady_clock::now();
         remaining_ms = wait_ms - static_cast<int>(chrono::duration_cast<chrono::milliseconds>(now - start).count());
     }
-
-
     return 0;
 }
 
-
+int send_invite_and_setup_server(int udpsock, int oppo_port){
+    //send invitation to opponent
+    //wait 10 sec for the response
+    //if success, build TCP and send info
+}
 int main(){
     //create socket
     int lobbyfd=socket(AF_INET,SOCK_STREAM,0);
@@ -154,16 +157,16 @@ int main(){
     cout<<"login success, now you r in lobby"<<endl;
     
     cout<<"creating UDP port for be scanned"<<endl;
-    int updSock = bind_udp_in_range(MAXUDPPORT, MINUDPPORT);
-    if (updSock == -1) {
+    int udpSock = bind_udp_in_range(MAXUDPPORT, MINUDPPORT);
+    if (udpSock == -1) {
         return 1;
     }
 
     fd_set master, readfd;
     FD_ZERO(&master);
     FD_SET(0,&master);
-    FD_SET(updSock,&master);
-    int state=0, maxfd=max(updSock,0);
+    FD_SET(udpSock,&master);
+    int state=0, maxfd=max(udpSock,0);
     cout<<"start waiting for the game.\n you can either type \'s\' to scan for available players\n and type \'i {name}\' for inviting the player for a game";
 
     /*
@@ -191,8 +194,14 @@ int main(){
                             break;
                         }
                         if(input=="s"){
-                            scan_for_player(udpSock);
-                            //TODO print all the player except myself
+                            if(scan_for_player(udpSock)<0){
+                                cerr<<"scan failed somehow"<<endl;
+                                return -10;
+                            }
+                            if(logined_players.size()<1){
+                                cout<<"you are the only one online, wait"<<endl;
+                                continue;
+                            }
                             cout<<"here's the available players"<<endl;
                             for(auto t:logined_players){
                                 if(t.first==username)continue;
@@ -201,8 +210,8 @@ int main(){
                         }
                         else if(input[0]=='i'){
                             input=input.substr(2);
-                            request_logined_players();
-                            if(logined_players.size()<2){
+                            scan_for_player(udpSock);
+                            if(logined_players.size()<1){
                                 cout<<"you are the only one online, wait"<<endl;
                                 continue;
                             }
@@ -210,30 +219,14 @@ int main(){
                                 cout<<"player not found"<<endl;
                                 continue;
                             }
-                            //found player to play
-                            opponent.sin_family = AF_INET;
-                            opponent.sin_port = htons(logined_players[input].port);
-                            inet_pton(AF_INET, IP, &opponent.sin_addr);
-
-                            string invitation = "I " + to_string(udpPort)+" " + username;
-                            sendto(udpsockfd,invitation.c_str(),invitation.size(),0,(sockaddr*)&opponent,sizeof(opponent));
-                            //send invitation through udp
-
-                            //wait for acceptence
-                            int byteRecv=recv(udpsockfd,buf,sizeof(buf),0);
-                            buf[byteRecv]='\0';
-                            if(buf[0]!='Y')continue;//invitation rejected, discarded
-
-                            string tcpinfo = to_string(ntohs(server.sin_port()));
-                            sendto(udpsockfd,tcpinfo.c_str(),tcpinfo.size(),0,(sockaddr*)&opponent,sizeof(opponent));
+                            if(send_invite_and_setup_server(udpSock, logined_players[input])<0){
+                                cout<<"you are either rejected or time outted"<<endl;
+                                continue;
+                            }
+                            cout<<"invitation accepted, process to building server"<<endl;
                         }
-                        else{
-                            cout<<"wrong syntax, error"<<endl;
-                            continue;
-                        }
-                        ingame=1;
                     }
-                    else if(i==udpsockfd){//invitation from another player
+                    else if(i==udpSock){//invitation from another player
                         //update opponent
                         int byteRecv=recv(udpsockfd,buf,sizeof(buf),0);
                         string msg(buf,0,byteRecv);
@@ -258,6 +251,7 @@ int main(){
                         ingame=2;
                     }
                 }
+            }
 
         }
 
