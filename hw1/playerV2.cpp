@@ -13,34 +13,111 @@
 #include <set>
 #include <sstream>
 #include "game.h"
+#include <chrono>
 
-const int PORT=45632;
+
+const int LOBBYPORT=45632;
+// const char *IP="140.113.235.151";
 const char *IP="127.0.0.1";
+const int MINUDPPORT=45700;
+const int MAXUDPPORT=45799;
 
 using namespace std;
 
 char buf[4096];
 string username,passwd,_,opponent_username;
+map<string,int> logined_players;//name, port
 
-//create vector of live player
-map<string, int> logined_players;//username, port
+//return socket fd
+int bind_udp_in_range(int minPort, int maxPort) {
+    int sockfd;
+    sockaddr_in addr{};
 
-int request_logined_players(int lobbyfd){
-    logined_players.clear();
-    send(lobbyfd, "r", 2, 0);
-    int byteRecv=recv(lobbyfd, buf, sizeof(buf) ,0);
-    buf[byteRecv]='\0';
-    string recved=string(buf,0,byteRecv), user;
-    int port;
-    stringstream ss(recved);
-    while (ss >> user >> port) {
-        logined_players[user] = port;   // <-- correct
+    for (int port = minPort; port <= maxPort; port++) {
+        sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+        if (sockfd < 0) {
+            cerr<<"failed to create socket for udp"<<endl;
+            return -1;
+        }
+
+        addr.sin_family = AF_INET;
+        inet_pton(AF_INET, IP, &addr.sin_addr);
+        addr.sin_port = htons(port);
+
+        if (bind(sockfd, (sockaddr*)&addr, sizeof(addr)) == 0) {
+            cout << "Bound UDP socket on port " << port << "\n";
+            return sockfd; // success
+        }
+        close(sockfd); // try next port
     }
+
+    cerr << "No available port in range " << minPort << "-" << maxPort << "\n";
+    return -1;
+}
+
+int scan_for_player(int udpsock){
+    char msg[]="r";
+    // prepare destination template
+    sockaddr_in dest{};
+    dest.sin_family = AF_INET;
+    if (inet_pton(AF_INET, IP, &dest.sin_addr) <= 0) {
+        cerr << "inet_pton failed for targetIP\n";
+        return -1;
+    }
+
+    // 1) blast messages to all ports
+    for (int p = MINUDPPORT; p <= MAXUDPPORT; ++p) {
+        dest.sin_port = htons(p);
+        ssize_t sent = sendto(udpsock, msg, strlen(msg), 0, (sockaddr*)&dest, sizeof(dest));
+        if (sent < 0) {
+            // cerr<<"failed to send, but no worries"<<endl;
+        }
+    }
+
+    auto start = chrono::steady_clock::now();
+    int wait_ms=1000;    
+    int remaining_ms = 1000;
+
+    while (remaining_ms > 0) {
+        fd_set readfds;
+        FD_ZERO(&readfds);
+        FD_SET(udpsock, &readfds);
+
+        timeval tv;
+        tv.tv_sec = remaining_ms / 1000;
+        tv.tv_usec = (remaining_ms % 1000) * 1000;
+
+        int rv = select(sock + 1, &readfds, nullptr, nullptr, &tv);
+        if (rv < 0) {
+            perror("select");
+            break;
+        } else if (rv == 0) {
+            // timeout: no more data
+            break;
+        }
+
+        if (FD_ISSET(sock, &readfds)) {
+            char buf[2048];
+            sockaddr_in from{};
+            socklen_t fromlen = sizeof(from);
+            ssize_t n = recvfrom(sock, buf, sizeof(buf)-1, 0, (sockaddr*)&from, &fromlen);
+            if (n > 0) {
+                buf[n] = '\0';
+                int fromPort = ntohs(from.sin_port);
+                replies.emplace_back(fromPort, string(buf, n));
+            }
+        }
+
+        auto now = chrono::steady_clock::now();
+        remaining_ms = wait_ms - static_cast<int>(chrono::duration_cast<chrono::milliseconds>(now - start).count());
+    }
+
+
     return 0;
 }
 
+
 int main(){
-    //init something
     //create socket
     int lobbyfd=socket(AF_INET,SOCK_STREAM,0);
     if(lobbyfd==-1){
@@ -48,38 +125,15 @@ int main(){
         return -1;
     }
     //create ip
-    sockaddr_in server;
-    server.sin_family=AF_INET;
-    server.sin_port=htons(PORT);
-    inet_pton(AF_INET,IP,&server.sin_addr);
-    //connect to server
-    if(connect(lobbyfd,(sockaddr*)&server, sizeof(server))==-1){
+    sockaddr_in lobbyAddr;
+    lobbyAddr.sin_family=AF_INET;
+    lobbyAddr.sin_port=htons(LOBBYPORT);
+    inet_pton(AF_INET,IP,&lobbyAddr.sin_addr);
+    //connect to lobby
+    if(connect(lobbyfd,(sockaddr*)&lobbyAddr, sizeof(lobbyAddr))==-1){
         cerr<<"connection failed"<<endl;
         return -2;
     }
-
-    //create a udp port
-
-    int udpsockfd,udpPort;
-    sockaddr_in servaddr;
-
-    udpsockfd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (udpsockfd < 0) {
-        perror("socket creation failed");
-        return -3;
-    }
-
-    servaddr.sin_family = AF_INET;
-    servaddr.sin_port = htons(0);
-    inet_pton(AF_INET,IP,&servaddr);
-
-    if (bind(udpsockfd, (const struct sockaddr*)&servaddr, sizeof(servaddr)) < 0) {
-        perror("bind failed");
-        close(udpsockfd);
-        return -4;
-    }
-    udpPort=ntohs((servaddr.sin_port));
-    //cout << "UDP Server started on port " << udpPort << endl;
 
     //choose login or register with username and passwd
     while(1){
@@ -90,7 +144,6 @@ int main(){
         stringstream ss(input);
         ss >> _ >> username >> passwd;
 
-        input += " " + to_string(udpPort);
         send(lobbyfd,input.c_str(),input.size(),0);
         //syntax: "[lr] {username} {passwd} {port}"
         //wait for confirm from server
@@ -98,84 +151,32 @@ int main(){
         if(buf[0]=='y')break;
         cout<<"failed to login, try again";
     }
-
     cout<<"login success, now you r in lobby"<<endl;
-    cout<<"To browse online players, type \'r\'; To start a game, type \'i {username}\'"<<endl;
+    
+    cout<<"creating UDP port for be scanned"<<endl;
+    int updSock = bind_udp_in_range(MAXUDPPORT, MINUDPPORT);
+    if (updSock == -1) {
+        return 1;
+    }
 
     fd_set master, readfd;
     FD_ZERO(&master);
     FD_SET(0,&master);
-    FD_SET(udpsockfd,&master);
-    sockaddr_in opponent;
-    socklen_t opponent_size=sizeof(opponent);
-    int opponent_fd;
-    int maxfd=max(udpsockfd,lobbyfd);
-    int ingame=0;//0: idle, 1:hosting game, 2:client game
+    FD_SET(updSock,&master);
+    int state=0, maxfd=max(updSock,0);
+    cout<<"start waiting for the game.\n you can either type \'s\' to scan for available players\n and type \'i {name}\' for inviting the player for a game";
 
+    /*
+        inf loop for the following states
+        case 0:
+            scan cin, udpServer for valid command
+        case 1:
+            hosting the game
+        case 2:
+            joining someone's game
+    */
     while(1){
-        if(ingame){
-            //in game
-            //who ever do send_invitation&TCP_info and listen&accept become the host.
-            //handles game. when done, return result to the server side.
-            if(ingame==1){
-                //create socket
-                int listening=socket(AF_INET,SOCK_STREAM, 0);
-                if(listening==-1){
-                    cerr<<"fail to create socket for game"<<endl;
-                    return -6;
-                }
-                //create ip
-                sockaddr_in server;
-                server.sin_family=AF_INET;
-                server.sin_port=htons(0);
-                inet_pton(AF_INET,IP,&server.sin_addr);
-                //bind
-                if(bind(listening,(sockaddr*)&server,sizeof(server))==-1){
-                    cerr<<"bind failed for game"<<endl;
-                    return -7;
-                }
-                cout<<"TCP server done, wait for connection"<<endl;
-
-                int opponent_fd=accept(listening,(sockaddr*)&opponent, &opponent_size);
-                if(opponent_fd==-1){
-                    cerr<<"acceptance failed";
-                    return -8;
-                }
-                close(listening);
-            }
-            else{//ingame == 2
-                int opponent_fd = socket(AF_INET, SOCK_STREAM, 0);
-                if (opponent_fd == -1) {
-                    cerr << "Failed to create socket\n";
-                    return -1;
-                }
-                
-                if (inet_pton(AF_INET, IP, &opponent.sin_addr) <= 0) {
-                    cerr << "Invalid IP address\n";
-                    return -2;
-                }
-                // 3. Connect
-                if (connect(opponent_fd, (sockaddr*)&opponent, sizeof(opponent)) == -1) {
-                    cerr << "Connection failed\n";
-                    close(opponent_fd);
-                    return -3;
-                }
-            }
-            int result;
-            string sendResult;
-            if(ingame==1){
-                result=host_game();
-            }
-            else{
-                result=client_game();
-            }
-            sendResult=(result?username:opponent_username)+" "+(result?opponent_username:username)+"\n";
-            send(lobbyfd,sendResult.c_str(),sendResult.size(),0);
-            ingame=0;
-        }
-        //state 1:idle
-        //either send request or wait for request or quit
-        else{
+        if(!state){
             readfd=master;
             if(select(maxfd+1,&readfd,NULL,NULL,NULL)==-1){
                 cerr<<"failed to select"<<endl;
@@ -189,8 +190,8 @@ int main(){
                             cout << "EOF on stdin, closing\n";
                             break;
                         }
-                        if(input=="r"){
-                            request_logined_players();
+                        if(input=="s"){
+                            scan_for_player(udpSock);
                             //TODO print all the player except myself
                             cout<<"here's the available players"<<endl;
                             for(auto t:logined_players){
@@ -257,8 +258,9 @@ int main(){
                         ingame=2;
                     }
                 }
-                if(ingame)break;//in case of send and accept corrupt
-            }
+
         }
+
     }
+
 }

@@ -17,6 +17,7 @@
 using namespace std;
 
 const int PORT=45632;
+// const char *IP="140.113.235.151";
 const char *IP="127.0.0.1";
 const string PLAYERFILE="players.txt";
 const string HISTORYFILE="game_history.txt";
