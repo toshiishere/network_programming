@@ -116,9 +116,94 @@ int scan_for_player(int udpsock){
 }
 
 int send_invite_and_setup_server(int udpsock, int oppo_port){
+    sockaddr_in opponent;
+    socklen_t opposize=sizeof(opponent);
+    opponent.sin_family=AF_INET;
+    opponent.sin_port=htons(oppo_port);
+    inet_pton(AF_INET,IP,&opponent.sin_addr);
     //send invitation to opponent
-    //wait 10 sec for the response
+    char msg[128]="i ";
+    strcpy(msg,opponent_username.c_str());
+    sendto(udpsock, msg, (2+opponent_username.size()), 0, (sockaddr*)&opponent.sin_addr, opposize);
+
+    // Wait for response for 10 seconds
+    auto start = chrono::steady_clock::now();
+    int wait_ms = 10000;  // 10 seconds timeout
+    int remaining_ms = wait_ms;
+
+    while (1) {
+        if(remaining_ms <= 0){
+            std::cout<<"timed out"<<endl;
+            return -1;
+        }
+
+        fd_set readfds;
+        FD_ZERO(&readfds);
+        FD_SET(udpsock, &readfds);
+
+        timeval tv;
+        tv.tv_sec = remaining_ms / 1000;
+        tv.tv_usec = (remaining_ms % 1000) * 1000;
+
+        int rv = select(udpsock + 1, &readfds, nullptr, nullptr, &tv);
+        if (rv < 0) {
+            perror("select");
+            break;
+        } else if (rv == 0) {
+            // Timeout: no data received within the specified time
+            std::cout << "Timeout: No response received within 10 seconds." << endl;
+            return -2;
+        }
+        
+        if (FD_ISSET(udpsock, &readfds)) {
+            char buf[2048];
+            sockaddr_in from{};
+            socklen_t fromlen = sizeof(from);
+            ssize_t n = recvfrom(udpsock, buf, sizeof(buf)-1, 0, (sockaddr*)&from, &fromlen);
+
+            if (n > 0) {
+                buf[n] = '\0';  // Null terminate the received message
+                //int fromPort = ntohs(from.sin_port);
+                if(buf[0]=='a'){//fromPort==oppo_port &&   IDK if to add this
+                    std::cout<<"invitation accepted, procede to sending TCP info"<<endl;
+                    break;
+                }
+            }
+        }
+
+        // Calculate the remaining time for the next iteration
+        auto now = chrono::steady_clock::now();
+        remaining_ms = wait_ms - static_cast<int>(chrono::duration_cast<chrono::milliseconds>(now - start).count());
+    }
     //if success, build TCP and send info
+
+    // 1. Create a listening socket (IPv4, TCP)
+    int listening = socket(AF_INET, SOCK_STREAM, 0);
+    if(listening==-1){
+        cerr<<"fail to create listening socket";
+        return -1;
+    }
+
+    // 2. Bind the socket to an IP and port
+    sockaddr_in game_server;
+    game_server.sin_family=AF_INET;
+    game_server.sin_port=htons(0);
+    inet_pton(AF_INET, IP, &game_server.sin_addr);
+    if(bind(listening, (sockaddr*)&game_server, sizeof(game_server))==-1){
+        cerr<<"fail to bind";
+        return -2;
+    }
+    if(listen(listening, SOMAXCONN)==-1){
+        cerr<<"fail to listen";
+        return -3;
+    }
+    char TCPinfo[20];
+    sprintf(TCPinfo, "%d", ntohs(game_server.sin_port));
+
+    sendto(udpsock, msg, (5), 0, (sockaddr*)&opponent.sin_addr, opposize);
+
+    //do accepting TODO
+    return listening;
 }
 int main(){
     //create socket
@@ -219,6 +304,7 @@ int main(){
                                 cout<<"player not found"<<endl;
                                 continue;
                             }
+                            opponent_username=input;
                             if(send_invite_and_setup_server(udpSock, logined_players[input])<0){
                                 cout<<"you are either rejected or time outted"<<endl;
                                 continue;
@@ -228,6 +314,7 @@ int main(){
                     }
                     else if(i==udpSock){//invitation from another player
                         //update opponent
+                        /*
                         int byteRecv=recv(udpsockfd,buf,sizeof(buf),0);
                         string msg(buf,0,byteRecv);
                         stringstream ss(msg);
@@ -248,6 +335,8 @@ int main(){
                         string msg(buf,0,byteRecv);
                         opponent.sin_port=htons(stoi(msg));
 
+                        */
+                        
                         ingame=2;
                     }
                 }
