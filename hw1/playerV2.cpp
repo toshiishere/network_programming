@@ -26,7 +26,7 @@ const int MAXUDPPORT=45799;
 using namespace std;
 
 char buf[4096];
-string username,passwd,_,opponent_username;
+string username,passwd,_,__,opponent_username;
 map<string,int> logined_players;//name, port
 
 //return socket fd
@@ -239,8 +239,63 @@ int send_invite_and_setup_server(int udpsock, int oppo_port){
         cout << "Client connected from " << inet_ntoa(client_addr.sin_addr)
              << ":" << ntohs(client_addr.sin_port) <<" connected successfully"<< endl;
     }
+    close(listening);
     return client_fd;
 }
+
+int got_invite(int udpsock){// retunr 0 if rejected, -1 if error, fd number if success
+    sockaddr_in from{};
+    socklen_t fromlen = sizeof(from);
+    ssize_t n = recvfrom(udpsock, buf, sizeof(buf)-1, 0, (sockaddr*)&from, &fromlen);//'from' is updated
+
+    string msg(buf,0,n);
+    stringstream ss(msg);
+    ss>>_>>opponent_username;
+
+    cout<<"invitation from player "<<opponent_username<<", do you accept? [y|n]";
+    cin>>_;
+    if (_ != "y") {
+        sendto(udpsock, "N", 2, 0, (sockaddr*)&from, fromlen);  // Send rejection
+        cout << "Rejecting invitation..." << endl;
+        return 0;
+    }
+    sendto(udpsock, "Y", 2, 0, (sockaddr*)&from, fromlen);  // Send acceptance
+    cout << "Accepted invitation from " << opponent_username << "!" << endl;
+
+    // Receive the TCP port number for the game
+    int byteRecv = recv(udpsock, buf, sizeof(buf), 0);
+    string game_port_msg(buf, 0, byteRecv);
+    int game_port = stoi(game_port_msg);
+
+    // 1. Create a socket (IPv4, TCP)
+    int sockfd=socket(AF_INET, SOCK_STREAM, 0);
+    if(sockfd==-1){
+        cerr<<"failed to create socket"<<endl;
+        return -1;
+    }
+    sockaddr_in opponentTCP;
+
+    opponentTCP.sin_family=AF_INET;
+    opponentTCP.sin_port=htons(game_port);
+    inet_pton(AF_INET, IP, &opponentTCP.sin_addr);
+
+    // 3. Connect to the server
+    //    - check for errors if connection fails
+    if(connect(sockfd,(sockaddr*)&opponentTCP, sizeof(opponentTCP))==-1){
+        cerr<<"connection failed"<<endl;
+        return -2;
+    }
+
+    // 4. Main loop:
+    //    - read input from user (cin / getline)
+    //    - if input == "quit", break
+    //    - send the input to the server
+    //    - recv response from server
+    //    - print server’s reply
+    cout << "Connected to server. Type messages and press Enter.\n";
+    return sockfd;  // Indicating successful invitation acceptance
+}
+
 int main(){
     //create socket
     int lobbyfd=socket(AF_INET,SOCK_STREAM,0);
@@ -342,34 +397,18 @@ int main(){
                             }
                             opponent_username=input;
                             if(send_invite_and_setup_server(udpSock, logined_players[input])<0){
-                                cout<<"you are either rejected or time outted"<<endl;
+                                cout<<"you are either rejected or time out-ed"<<endl;
                                 continue;
                             }
-                            cout<<"invitation accepted, process to building server"<<endl;
+                            cout<<"process to game"<<endl;
+                            state=1;
                         }
                     }
                     else if(i==udpSock){//invitation from another player
                         //update opponent
+                        got_invite();
                         /*
-                        int byteRecv=recv(udpsockfd,buf,sizeof(buf),0);
-                        string msg(buf,0,byteRecv);
-                        stringstream ss(msg);
-                        ss>>_>>_>>opponent_username;
-                        opponent.sin_family=AF_INET;
-                        opponent.sin_port=htons(stoi(_));
-                        inet_pton(AF_INET, IP, opponent.sin_addr);
-                        cout<<"invitation from player "<<opponent_username<<", do you accept? [y|n]";
-                        cin>>_;
-                        if(_!="y"){
-                            sendto(udpsockfd,"N", 2, 0, (sockaddr*)&opponent, sizeof(opponent));
-                            cout<<"rejecting invitation"<<endl;
-                            continue;
-                        }
-                        sendto(udpsockfd,"Y", 2, 0, (sockaddr*)&opponent, sizeof(opponent));
-
-                        int byteRecv=recv(udpsockfd,buf,sizeof(buf),0);
-                        string msg(buf,0,byteRecv);
-                        opponent.sin_port=htons(stoi(msg));
+                        
 
                         */
                         

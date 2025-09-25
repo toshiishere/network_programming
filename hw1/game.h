@@ -1,8 +1,8 @@
-#ifndef MATH_UTILS_H
-#define MATH_UTILS_H
+#ifndef GAME_H   // Guards against multiple inclusions
+#define GAME_H
 
-int host_game();
-int client_game(); 
+// Function declarations (prototypes)
+int host_game();  // Declaring host_game function
+int client_game(); // Declaring client_game function
 
-
-#endif
+#endif // GAME_H
