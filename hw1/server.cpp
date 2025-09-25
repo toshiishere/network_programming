@@ -13,7 +13,7 @@
 #include <map>
 #include <sstream>
 #include <ctime>
-
+#include <set>
 using namespace std;
 
 const int PORT=45632;
@@ -25,6 +25,7 @@ const string HISTORYFILE="game_history.txt";
 
 //create vector of live player
 map<int, string> logined_players;//fd, playerInfo
+set<string> logined_players_set;
 map<int,int> alive_players;//fd, state(-1:not loggined, 0:loggined)
 
 string getCurrentTime() {
@@ -86,8 +87,14 @@ int login(vector<string> messages,int fd){
             ss >> username >> passwd;
             if(messages[1]==username){
                 if(messages[2]==passwd){
+                    if(logined_players_set.find(messages[1])!=logined_players_set.end()){
+                        cout<<"he/she has logged in, use another account"<<endl;
+                        return -2;
+                    }
                     logined_players.insert({fd, username});
+                    logined_players_set.insert(username);
                     cout<<"player "<<username<<" log in successfully"<<endl;
+                    send(fd,"y",2,0);
                     alive_players[fd]=0;
                     return 0;
                 }
@@ -128,7 +135,9 @@ int login(vector<string> messages,int fd){
         outFile.close();
 
         logined_players.insert({fd, messages[1]});
+        logined_players_set.insert(messages[1]);
         cout<<"player "<<messages[1]<<" log in successfully"<<endl;
+        send(fd,"y",2,0);
         alive_players[fd]=0;
         return 0;
     }
@@ -155,7 +164,7 @@ int main(){
     inet_pton(AF_INET,IP,&server.sin_addr);
     //bind
     if(bind(listening,(sockaddr*)&server,sizeof(server))==-1){
-        cerr<<"bind failed"<<endl;
+        perror("bind failed");
         return -2;
     }
     if (listen(listening, SOMAXCONN) == -1) {
@@ -216,8 +225,7 @@ int main(){
                         perror("accept");
                         continue;
                     }
-                    string welcomeMsg="welcome to game lobby\n complete the login/register\nformat: [l/r] [playername] [password]";
-                    send(newfd,welcomeMsg.c_str(),welcomeMsg.size(),0);
+                    
                     alive_players.insert({newfd,-1});
                     FD_SET(newfd, &master);
                     if(maxfd<newfd) maxfd=newfd;
@@ -233,12 +241,13 @@ int main(){
                     //if >0 can be either
                     else if(byteRecv==0){//disconnect and update alive_player and possibly loggined
                         if(logined_players.find(i)!=logined_players.end()){
-                            string toexit=logined_players[alive_players[i]];
-                            cout<<"player "<<toexit<<" with fd="<<i<< "has log out"<<endl;
+                            string toexit=logined_players[i];
+                            cout<<"player "<<toexit<<" with fd="<<i<< " has log out"<<endl;
                             logined_players.erase(i);
+                            logined_players_set.erase(toexit);
                         }
                         else{ 
-                            cout<<"player un-registered with fd="<<i<< "has exited"<<endl;
+                            cout<<"player un-registered with fd="<<i<< " has exited"<<endl;
                         }
                         alive_players.erase(i);
                         FD_CLR(i,&master);
@@ -268,7 +277,7 @@ int main(){
                                 return -7;
                             }
                             else if(resultLogin<-1){
-                                string errorcode="you failed to login\n here's are the error codes -2:wrong passwd, -3:player not found ,-4 register dulplicate, -5:other";
+                                string errorcode="the player failed to login\n here's are the error codes -2:wrong passwd, -3:player not found ,-4 register dulplicate, -5:other";
                                 errorcode.append("\nyour error code:"+resultLogin);
                                 send(i,errorcode.c_str(),errorcode.size(),0);
                             }
