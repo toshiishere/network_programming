@@ -169,6 +169,7 @@ int main(){
         cerr<<"bind failed"<<endl;
         return -2;
     }
+    cout<<"listening at port "<<PORT<<endl;
 
 
     //deal with fds, check response from cin and player's game result
@@ -179,12 +180,13 @@ int main(){
     int maxfd=listening;
     cout<<"To quit, type quit; To query history game, type query_history; To view online players, type query_player"<<endl;
     while(1){
+        FD_ZERO(&readfd);
         readfd=master;
         if(select(maxfd+1,&readfd,NULL,NULL,NULL)==-1){
             cerr<<"select failed";
             continue;
         }
-        for(int i=0;i<=listening;i++){
+        for(int i=0;i<=maxfd;i++){
             if(FD_ISSET(i,&readfd)){
 
                 if(i==0){//deal with I/O of server
@@ -214,9 +216,13 @@ int main(){
                 else if(i==listening){//accept new client, update not_logined
                     sockaddr_in client;
                     socklen_t clientSize=sizeof(client);
-                    int newfd=accept(i,(sockaddr*)&client, &clientSize);
-                    if(newfd==-1){
-                        cerr<<"acceptance failed"<<endl;
+                    int newfd=accept(listening,(sockaddr*)&client, &clientSize);
+                    if (newfd == -1) {
+                        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                            // harmless: no client actually there
+                            continue;
+                        }
+                        perror("accept");
                         continue;
                     }
                     string welcomeMsg="welcome to game lobby\n complete the login/register\nformat: [l/r] [playername] [password]";

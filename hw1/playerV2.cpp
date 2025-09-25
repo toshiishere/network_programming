@@ -317,7 +317,7 @@ int main(){
     inet_pton(AF_INET,IP,&lobbyAddr.sin_addr);
     //connect to lobby
     if(connect(lobbyfd,(sockaddr*)&lobbyAddr, sizeof(lobbyAddr))==-1){
-        cerr<<"connection failed"<<endl;
+        cerr<<"lobby connection failed"<<endl;
         return -2;
     }
 
