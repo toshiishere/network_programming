@@ -23,13 +23,8 @@ const string PLAYERFILE="players.txt";
 const string HISTORYFILE="game_history.txt";
 
 
-
-struct player{
-    string name;
-    int port;
-};
 //create vector of live player
-map<int, player> logined_players;//fd, playerInfo
+map<int, string> logined_players;//fd, playerInfo
 map<int,int> alive_players;//fd, state(-1:not loggined, 0:loggined)
 
 string getCurrentTime() {
@@ -57,7 +52,7 @@ void write_history(string messages){
 void browse_logined(int fd){
     stringstream ss;
     for (auto  t :logined_players) {
-        ss << t.second.name <<" " <<t.second.port <<endl;
+        ss << t.second <<" with fd= " <<t.first <<endl;
     }
     string msg = ss.str();  
     send(fd, msg.c_str(), msg.size(), 0);
@@ -91,11 +86,8 @@ int login(vector<string> messages,int fd){
             ss >> username >> passwd;
             if(messages[1]==username){
                 if(messages[2]==passwd){
-                    player p;
-                    p.name = username;
-                    p.port = stoi(messages[3]);
-                    logined_players.insert({fd, p});
-                    cout<<"player "<<p.name<<" log in successfully"<<endl;
+                    logined_players.insert({fd, username});
+                    cout<<"player "<<username<<" log in successfully"<<endl;
                     alive_players[fd]=0;
                     return 0;
                 }
@@ -117,10 +109,10 @@ int login(vector<string> messages,int fd){
         }
         string line;
         while (getline(inFile, line)) {
-            string username, passwd;
             stringstream ss(line);
+            string username, passwd;
             ss >> username >> passwd;
-            if(messages[1]==username || messages[1]=="request"){
+            if(messages[1]==username){
                 cout<<"player "<<messages[1]<<" dulplicated"<<endl;
                 return -3;  
             }
@@ -135,11 +127,8 @@ int login(vector<string> messages,int fd){
         outFile << messages[1]<<" "<<messages[2] << "\n";
         outFile.close();
 
-        player p;
-        p.name = messages[1];
-        p.port = stoi(messages[3]);
-        logined_players.insert({fd, p});
-        cout<<"player "<<p.name<<" log in successfully"<<endl;
+        logined_players.insert({fd, messages[1]});
+        cout<<"player "<<messages[1]<<" log in successfully"<<endl;
         alive_players[fd]=0;
         return 0;
     }
@@ -169,6 +158,10 @@ int main(){
         cerr<<"bind failed"<<endl;
         return -2;
     }
+    if (listen(listening, SOMAXCONN) == -1) {
+        perror("listen");
+        return -3;
+    }
     cout<<"listening at port "<<PORT<<endl;
 
 
@@ -180,12 +173,13 @@ int main(){
     int maxfd=listening;
     cout<<"To quit, type quit; To query history game, type query_history; To view online players, type query_player"<<endl;
     while(1){
-        FD_ZERO(&readfd);
         readfd=master;
-        if(select(maxfd+1,&readfd,NULL,NULL,NULL)==-1){
+        int change=select(maxfd+1,&readfd,NULL,NULL,NULL);
+        if(change==-1){
             cerr<<"select failed";
-            continue;
+            return -6;
         }
+        if(!change)continue;
         for(int i=0;i<=maxfd;i++){
             if(FD_ISSET(i,&readfd)){
 
@@ -205,7 +199,7 @@ int main(){
                     }
                     else if(input=="query_player"){
                         for(auto t:alive_players){
-                            cout<<"username: "<<(t.second?"unknown":logined_players[t.first].name)<<" with fd="<<t.first<<endl;
+                            cout<<"username: "<<(t.second?"unknown":logined_players[t.first])<<" with fd="<<t.first<<endl;
                         }
                     }
                     else{
@@ -218,10 +212,7 @@ int main(){
                     socklen_t clientSize=sizeof(client);
                     int newfd=accept(listening,(sockaddr*)&client, &clientSize);
                     if (newfd == -1) {
-                        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                            // harmless: no client actually there
-                            continue;
-                        }
+                        // cerr<<"fail to accept new client"<<endl;
                         perror("accept");
                         continue;
                     }
@@ -242,8 +233,8 @@ int main(){
                     //if >0 can be either
                     else if(byteRecv==0){//disconnect and update alive_player and possibly loggined
                         if(logined_players.find(i)!=logined_players.end()){
-                            player toexit=logined_players[alive_players[i]];
-                            cout<<"player "<<toexit.name<<" with fd="<<i<< "has log out"<<endl;
+                            string toexit=logined_players[alive_players[i]];
+                            cout<<"player "<<toexit<<" with fd="<<i<< "has log out"<<endl;
                             logined_players.erase(i);
                         }
                         else{ 
@@ -268,7 +259,7 @@ int main(){
                                 messages.emplace_back(p);
                                 p = strtok(NULL, " ");
                             }
-                            if(messages.size()>4){
+                            if(messages.size()>3){
                                 send(i,"your syntax is incorrect, not space in username and passwd",59,0);
                                 continue;
                             }
