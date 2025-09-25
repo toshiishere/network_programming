@@ -14,7 +14,7 @@
 #include <sstream>
 #include "game.h"
 #include <chrono>
-#include<netdb.h>
+// #include<netdb.h/>
 
 
 const int LOBBYPORT=45632;
@@ -115,7 +115,7 @@ int scan_for_player(int udpsock){
     }
     return 0;
 }
-
+//return client fd
 int send_invite_and_setup_server(int udpsock, int oppo_port){
     sockaddr_in opponent;
     socklen_t opposize=sizeof(opponent);
@@ -296,6 +296,10 @@ int got_invite(int udpsock){// retunr 0 if rejected, -1 if error, fd number if s
     return sockfd;  // Indicating successful invitation acceptance
 }
 
+int report_game_result(int result, int state){//state 1:hosting, state 2:joining, result 1:win 0 lose
+
+}
+
 int main(){
     //create socket
     int lobbyfd=socket(AF_INET,SOCK_STREAM,0);
@@ -354,6 +358,7 @@ int main(){
         case 2:
             joining someone's game
     */
+   int client_fd;
     while(1){
         if(!state){
             readfd=master;
@@ -396,7 +401,8 @@ int main(){
                                 continue;
                             }
                             opponent_username=input;
-                            if(send_invite_and_setup_server(udpSock, logined_players[input])<0){
+                            client_fd=send_invite_and_setup_server(udpSock, logined_players[input]);
+                            if(client_fd<0){
                                 cout<<"you are either rejected or time out-ed"<<endl;
                                 continue;
                             }
@@ -405,18 +411,30 @@ int main(){
                         }
                     }
                     else if(i==udpSock){//invitation from another player
-                        //update opponent
-                        got_invite();
-                        /*
-                        
-
-                        */
-                        
-                        ingame=2;
+                        client_fd=got_invite(udpSock);
+                        if(client_fd<0){
+                            cout<<"you are time out-ed"<<endl;
+                            continue;
+                        }
+                        cout<<"process to game"<<endl;
+                        state=2;
                     }
                 }
             }
 
+        }
+        else{//in game
+            int result;
+            if(state==1)result=host_game(client_fd,opponent_username);
+            else result=client_game(client_fd,opponent_username);
+            if(result<0){
+                cout<<"game not finished, nothing recorded"<<endl;
+            }
+            else{
+                report_game_result(result, state);
+            }
+            state=0;
+            close(client_fd);
         }
 
     }
