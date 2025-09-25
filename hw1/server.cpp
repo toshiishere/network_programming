@@ -40,14 +40,18 @@ string getCurrentTime() {
     return string(buffer);
 }
 
-void write_history(vector<string> messages){
+void write_history(string messages){
     ofstream outFile(HISTORYFILE, ios::app); // append to file
-        if (!outFile) {
-            cerr << "Error opening file for writing!" << endl;
-            return;
-        }
-        outFile << messages[0]<<" "<<messages[1] <<" "<<getCurrentTime()<<"\n";
-        outFile.close();
+    stringstream ss(messages);
+    string winner, loser;
+    ss>>winner>>loser;
+    //TODO if need validate the players
+    if (!outFile) {
+        cerr << "Error opening file for writing!" << endl;
+        return;
+    }
+    outFile << winner <<" "<<loser <<" "<<getCurrentTime()<<"\n";
+    outFile.close();
     return;
 }
 void browse_logined(int fd){
@@ -173,7 +177,7 @@ int main(){
     FD_SET(listening,&master);
     FD_SET(0,&master);
     int maxfd=listening;
-    cout<<"To quit, type quit; To query history game, type query; To view online players, type query_player"<<endl;
+    cout<<"To quit, type quit; To query history game, type query_history; To view online players, type query_player"<<endl;
     while(1){
         readfd=master;
         if(select(maxfd+1,&readfd,NULL,NULL,NULL)==-1){
@@ -194,7 +198,7 @@ int main(){
                         close(listening);
                         return 0;
                     }
-                    else if(input=="query"){
+                    else if(input=="query_history"){
                         look_up_history();
                     }
                     else if(input=="query_player"){
@@ -247,15 +251,8 @@ int main(){
                         if(logined_players.find(i)!=logined_players.end()){//logined player
                             //request of alive player
                             //endgame update game history
-                            vector<string> messages;
-                            char *p = strtok(buf, " ");
-                            while (p != NULL) {
-                                messages.emplace_back(p);
-                                p = strtok(NULL, " ");
-                            }
-                            //if player's name being request, it would go wrong
-                            if(messages[0]=="request")browse_logined(i);
-                            else write_history(messages);
+                            string st(buf);
+                            write_history(st);
                         }
 
                         else{// login or register

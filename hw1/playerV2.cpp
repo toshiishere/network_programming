@@ -13,6 +13,8 @@
 #include <set>
 #include <sstream>
 #include "game.h"
+std::string username;
+std::string opponent_username;
 #include <chrono>
 // #include<netdb.h/>
 
@@ -25,8 +27,7 @@ const int MAXUDPPORT=45799;
 
 using namespace std;
 
-char buf[4096];
-string username,passwd,_,__,opponent_username;
+string passwd,_,__;
 map<string,int> logined_players;//name, port
 
 //return socket fd
@@ -246,6 +247,7 @@ int send_invite_and_setup_server(int udpsock, int oppo_port){
 int got_invite(int udpsock){// retunr 0 if rejected, -1 if error, fd number if success
     sockaddr_in from{};
     socklen_t fromlen = sizeof(from);
+    char buf[1024];
     ssize_t n = recvfrom(udpsock, buf, sizeof(buf)-1, 0, (sockaddr*)&from, &fromlen);//'from' is updated
 
     string msg(buf,0,n);
@@ -297,7 +299,8 @@ int got_invite(int udpsock){// retunr 0 if rejected, -1 if error, fd number if s
 }
 
 int report_game_result(int result, int state){//state 1:hosting, state 2:joining, result 1:win 0 lose
-
+    //TODO
+    return 1;
 }
 
 int main(){
@@ -330,6 +333,7 @@ int main(){
         send(lobbyfd,input.c_str(),input.size(),0);
         //syntax: "[lr] {username} {passwd} {port}"
         //wait for confirm from server
+        char buf[1024];
         int byteRecv=recv(lobbyfd,buf,sizeof(buf),0);
         if(buf[0]=='y')break;
         cout<<"failed to login, try again";
