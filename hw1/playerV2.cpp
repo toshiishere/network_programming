@@ -14,6 +14,7 @@
 #include <sstream>
 #include "game.h"
 #include <chrono>
+#include<netdb.h>
 
 
 const int LOBBYPORT=45632;
@@ -202,8 +203,43 @@ int send_invite_and_setup_server(int udpsock, int oppo_port){
 
     sendto(udpsock, msg, (5), 0, (sockaddr*)&opponent.sin_addr, opposize);
 
-    //do accepting TODO
-    return listening;
+        // 5. Set up select() timeout
+    fd_set readfds;
+    FD_ZERO(&readfds);
+    FD_SET(listening, &readfds);
+
+    struct timeval timeout;
+    timeout.tv_sec = 10;  // 10 seconds timeout
+    timeout.tv_usec = 0;
+
+    // 6. Wait for a client to connect (with timeout)
+    cout << "Waiting for a client to connect..." << endl;
+    int activity = select(listening + 1, &readfds, NULL, NULL, &timeout),client_fd;
+    
+    if (activity == -1) {
+        cerr << "Select failed" << endl;
+        close(listening);
+        return -1;
+    }
+    else if (activity == 0) {
+        cout << "Timeout: No connection after 10 seconds" << endl;
+        return -2;
+    }
+    else {
+        // A client is trying to connect, accept the connection
+        sockaddr_in client_addr{};
+        socklen_t client_len = sizeof(client_addr);
+        client_fd = accept(listening, (sockaddr*)&client_addr, &client_len);
+        if (client_fd == -1) {
+            cerr << "Failed to accept connection" << endl;
+            close(listening);
+            return -1;
+        }
+
+        cout << "Client connected from " << inet_ntoa(client_addr.sin_addr)
+             << ":" << ntohs(client_addr.sin_port) <<" connected successfully"<< endl;
+    }
+    return client_fd;
 }
 int main(){
     //create socket
