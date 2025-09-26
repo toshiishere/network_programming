@@ -1,17 +1,14 @@
 #include <stdio.h>
 #include <string.h>
+#include<bits/stdc++.h>
+using namespace std;
 
 int main() {
-    char myString[] = "hello world";
-    char searchChar = ' ';
-    char *result;
-
-    result = strchr(myString, searchChar);
-
-    if (result != NULL) {
-        printf("Character '%c' found at position: %s\n", searchChar, result+1);
-    } else {
-        printf("Character '%c' not found in the string.\n", searchChar);
+    string st="Congratulations! you son";
+    cout<<st;
+    if(st.size()>=17 && st.compare(0,17,"Congratulations!")==0){
+        cout<<"returned"<<endl;
+        return 1;
     }
 
     return 0;

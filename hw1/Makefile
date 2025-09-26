@@ -13,7 +13,7 @@ TARGET_PLAYER := $(OUTDIR)/playerV2.exe
 
 all: $(TARGET_SERVER) $(TARGET_PLAYER)
 
-debug: CXXFLAGS += -g
+debug: CXXFLAGS += -g -O0
 debug: all
 
 $(OUTDIR):

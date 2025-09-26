@@ -513,6 +513,7 @@ int main(){
             else{
                 report_game_result(result, state, lobbyfd);
             }
+            cout<<"you are back to lobby"<<endl;
             state=0;
             close(client_fd);
         }

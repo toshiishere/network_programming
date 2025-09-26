@@ -135,7 +135,7 @@ int client_game(int oppofd, string opponame){
     FD_SET(0,&master);
     while(1){
         readfd=master;
-        if(select(oppofd+1,&readfd,NULL,NULL,NULL)==-1){
+        if(select(maxfd+1,&readfd,NULL,NULL,NULL)==-1){
             cerr<<"select failed"<<endl;
             continue;
         }
@@ -159,12 +159,14 @@ int client_game(int oppofd, string opponame){
                 buf[byteRecv] = '\0';
                 string st(buf);
                 cout<<st;
-                if(st.size()>=17 && st.compare(0,17,"Congratulations!")==0){
+                if(st.find("Congratulations!")!=string::npos){
+                    cerr<<"returned"<<endl;
                     return 1;
                 }
             }
         }
     }
+    return 0;
 }
 
 
@@ -197,7 +199,7 @@ int host_game(int oppofd, string opponame){
     broadcast  << "I picked a word of length " << wordLen << ". Try to guess it!"<<endl;
 
     // Gameplay loop
-    int turn,result;
+    int turn;
     for(turn=1; ;turn++){
         if(turn % 2){//host's turn
             string guess;
