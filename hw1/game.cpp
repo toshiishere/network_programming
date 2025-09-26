@@ -13,6 +13,10 @@
 #include <ctime>
 #include <algorithm>
 
+#include <streambuf>
+#include <cerrno>
+#include <csignal>
+
 using namespace std;
 char buf[1024];
 
@@ -47,25 +51,29 @@ public:
     BroadcastBuf(int fd) : sockfd(fd), coutBuf(std::cout.rdbuf()) {}
 
 protected:
-    // Called whenever a character is put into the buffer
+    // write one char to cout + socket
     virtual int overflow(int ch) override {
         if (ch == EOF) return !EOF;
 
-        // write to cout
+        // write to cout first
         if (coutBuf->sputc(ch) == EOF) return EOF;
 
-        // also write to socket (single character)
-        char c = ch;
-        if (send(sockfd, &c, 1, 0) == -1) {
-            cerr<<"customized broadcasting error"<<endl;
+        // write to socket
+        char c = static_cast<char>(ch);
+        if (::send(sockfd, &c, 1, MSG_NOSIGNAL) == -1) {
+            if (errno == EPIPE || errno == ECONNRESET) {
+                std::cerr << "Broadcast: peer disconnected" << std::endl;
+            } else {
+                perror("Broadcast send");
+            }
+            return EOF; // signals failure → ostream sets badbit
         }
         return ch;
     }
 
-    // Called when flushing (e.g. std::endl)
+    // flush underlying cout
     virtual int sync() override {
         if (coutBuf->pubsync() == -1) return -1;
-        // you could flush socket here if you buffered
         return 0;
     }
 };
@@ -78,6 +86,10 @@ public:
     BroadcastStream(int fd) : std::ostream(&buf), buf(fd) {}
 };
 
+
+// =============================
+// SendBuf
+// =============================
 class SendBuf : public std::streambuf {
     int sockfd;
 
@@ -85,18 +97,21 @@ public:
     SendBuf(int fd) : sockfd(fd) {}
 
 protected:
-    // Called whenever a character is put into the buffer
     virtual int overflow(int ch) override {
         if (ch == EOF) return !EOF;
 
-        char c = ch;
-        if (send(sockfd, &c, 1, 0) == -1) {
-            cerr<<"customized sendto failed"<<endl;
+        char c = static_cast<char>(ch);
+        if (::send(sockfd, &c, 1, MSG_NOSIGNAL) == -1) {
+            if (errno == EPIPE || errno == ECONNRESET) {
+                std::cerr << "Send: peer disconnected" << std::endl;
+            } else {
+                perror("Send");
+            }
+            return EOF; // signals failure → ostream sets badbit
         }
         return ch;
     }
 
-    // Called when flushing (e.g. std::endl)
     virtual int sync() override {
         return 0; // nothing extra to flush
     }
@@ -109,6 +124,7 @@ class SendStream : public std::ostream {
 public:
     SendStream(int fd) : std::ostream(&buf), buf(fd) {}
 };
+
 
 int client_game(int oppofd, string opponame){
     cout<<"game starting"<<endl;
@@ -143,6 +159,9 @@ int client_game(int oppofd, string opponame){
                 buf[byteRecv] = '\0';
                 string st(buf);
                 cout<<st;
+                if(st.size()>=17 && st.compare(0,17,"Congratulations!")==0){
+                    return 1;
+                }
             }
         }
     }
@@ -182,7 +201,7 @@ int host_game(int oppofd, string opponame){
     for(turn=1; ;turn++){
         if(turn % 2){//host's turn
             string guess;
-            cout << "Your guess: ";
+            cout << username<<"'s guess: ";
             cin >> guess;
 
             if (guess.size() != wordLen) {
@@ -197,11 +216,11 @@ int host_game(int oppofd, string opponame){
 
             if (a == wordLen) {
                 broadcast << "Congratulations! "<<username<<" guessed the word: " << secret << "\n";
-                result=1;
+                return 1;
             }
         }
         else{//client's turn
-            sendout << "It's your turn. Your guess: "<<endl;
+            sendout << opponame <<"'s guess: "<<endl;
 
             int byteRecv=recv(oppofd,buf,sizeof(buf),0);
             if(byteRecv==-1){
@@ -228,7 +247,7 @@ int host_game(int oppofd, string opponame){
 
             if (a == wordLen) {
                 broadcast << "Congratulations! "<<opponent_username <<" guessed the word: " << secret << "\n";
-                result=2;
+                return 2;
             }
         }
     }

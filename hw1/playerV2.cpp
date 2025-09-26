@@ -335,9 +335,21 @@ int got_something(int udpsock){// retunr 0 if rejected, -1 if error, fd number i
     return -1;
 }
 
-int report_game_result(int result, int state){//state 1:hosting, state 2:joining, result 1:win 0 lose
+int report_game_result(int result, int state, int lobbyfd){//state 1:hosting, state 2:joining, result 1:win 0 lose
     //TODO
-    return result*state;
+    if(result==2)return 0;
+    string winner, loser;
+    if(result){
+        winner=username;
+        loser=opponent_username;
+    }
+    else{
+        winner=opponent_username;
+        loser=username;
+    }
+    string msg=winner+" "+loser;
+    send(lobbyfd,msg.c_str(),msg.size(),0);
+    return 0;
 }
 
 int main(){
@@ -470,6 +482,10 @@ int main(){
                             cout<<"connection failed"<<endl;
                             continue;
                         }
+                        if(client_fd==0){
+                            cout<<"you are REJECTED, take shower dude"<<endl;
+                            continue;
+                        }
                         cout<<"process to game"<<endl;
                         state=2;
                     }
@@ -495,7 +511,7 @@ int main(){
                 cout<<"game not finished, nothing recorded"<<endl;
             }
             else{
-                report_game_result(result, state);
+                report_game_result(result, state, lobbyfd);
             }
             state=0;
             close(client_fd);

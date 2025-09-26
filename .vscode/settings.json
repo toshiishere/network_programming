@@ -8,6 +8,7 @@
         "ostream": "cpp",
         "future": "cpp",
         "condition_variable": "cpp",
-        "chrono": "cpp"
+        "chrono": "cpp",
+        "fstream": "cpp"
     }
 }
