@@ -10,7 +10,11 @@ OUTDIR := out
 TARGET_SERVER := $(OUTDIR)/server.exe
 TARGET_PLAYER := $(OUTDIR)/playerV2.exe
 
+
 all: $(TARGET_SERVER) $(TARGET_PLAYER)
+
+debug: CXXFLAGS += -g
+debug: all
 
 $(OUTDIR):
 	mkdir -p $(OUTDIR)
@@ -28,4 +32,5 @@ clean:
 	rm -f *.o
 	rm -rf $(OUTDIR)
 
-.PHONY: all clean
+.PHONY: all clean debug
+

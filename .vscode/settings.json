@@ -5,6 +5,9 @@
         "array": "cpp",
         "string_view": "cpp",
         "initializer_list": "cpp",
-        "ostream": "cpp"
+        "ostream": "cpp",
+        "future": "cpp",
+        "condition_variable": "cpp",
+        "chrono": "cpp"
     }
 }

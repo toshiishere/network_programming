@@ -12,6 +12,7 @@
 #include <map>
 #include <set>
 #include <sstream>
+#include <future>
 #include "game.h"
 std::string username;
 std::string opponent_username;
@@ -177,8 +178,8 @@ int send_invite_and_setup_server(int udpsock, int oppo_port){
             if (n > 0) {
                 buf[n] = '\0';  // Null terminate the received message
                 //int fromPort = ntohs(from.sin_port);
-                if(buf[0]=='a'){//fromPort==oppo_port &&   IDK if to add this
-                    std::cout<<"invitation accepted, procede to sending TCP info"<<endl;
+                if(buf[0]=='Y'){//fromPort==oppo_port &&   IDK if to add this
+                    cout<<"invitation accepted, procede to sending TCP info"<<endl;
                     break;
                 }
             }
@@ -200,7 +201,7 @@ int send_invite_and_setup_server(int udpsock, int oppo_port){
     // 2. Bind the socket to an IP and port
     sockaddr_in game_server;
     game_server.sin_family=AF_INET;
-    game_server.sin_port=htons(0);
+    game_server.sin_port=0;
     inet_pton(AF_INET, IP, &game_server.sin_addr);
     if(bind(listening, (sockaddr*)&game_server, sizeof(game_server))==-1){
         cerr<<"fail to bind";
@@ -210,10 +211,16 @@ int send_invite_and_setup_server(int udpsock, int oppo_port){
         cerr<<"fail to listen";
         return -3;
     }
-    char TCPinfo[20];
-    sprintf(TCPinfo, "%d", ntohs(game_server.sin_port));
+    sockaddr_in actual_addr{};
+    socklen_t len = sizeof(actual_addr);
+    if (getsockname(listening, (sockaddr*)&actual_addr, &len) == -1) {
+        cerr << "getsockname failed";
+        return -4;
+    }
 
-    sendto(udpsock, TCPinfo, sizeof(TCPinfo), 0, (sockaddr*)&opponent, sizeof(opponent));
+    string TCPinfo = to_string(ntohs(actual_addr.sin_port));
+    cerr << "Listening on port: " << TCPinfo << endl;
+    sendto(udpsock, TCPinfo.c_str(), sizeof(TCPinfo), 0, (sockaddr*)&opponent, sizeof(opponent));
 
     // 5. Set up select() timeout
     fd_set readfds;
@@ -255,7 +262,7 @@ int send_invite_and_setup_server(int udpsock, int oppo_port){
     return client_fd;
 }
 
-int got_invite(int udpsock){// retunr 0 if rejected, -1 if error, fd number if success, -4 if just be scanned
+int got_something(int udpsock){// retunr 0 if rejected, -1 if error, fd number if success, -4 if just be scanned
     
     sockaddr_in from{};
     socklen_t fromlen = sizeof(from);
@@ -268,53 +275,64 @@ int got_invite(int udpsock){// retunr 0 if rejected, -1 if error, fd number if s
         sendto(udpsock, msg.c_str(), msg.size(), 0, (sockaddr*)&from, fromlen);
         return -4;
     }
-    string msg(buf,0,n);
-    cerr<<msg<<endl;
-    // stringstream ss(msg);
-    // ss>>_>>opponent_username;
+    
+    
+    if(buf[0]=='i'){
+        string st(buf);
+        stringstream ss(st);
+        ss>>_>>opponent_username;
+        // stringstream ss(msg);
+        // ss>>_>>opponent_username;
 
-    cout<<"invitation from player "<<opponent_username<<", do you accept? [y|n]"<<endl;
-    cin>>_;
-    if (_ != "y") {
-        sendto(udpsock, "N", 2, 0, (sockaddr*)&from, fromlen);  // Send rejection
-        cout << "Rejecting invitation..." << endl;
-        return 0;
+        cout<<"invitation from player "<<opponent_username<<", do you accept? [y|n]"<<endl;
+        future<string> result = async(launch::async, [] {
+            string input;
+            getline(cin, input);
+            return input;
+        });
+        string input;
+        // Wait up to 10 seconds
+        if (result.wait_for(chrono::seconds(9)) == future_status::ready) {
+            input = result.get();
+        } else {
+            cout << "Timeout! You didn't answer in time." << endl;
+            return 0;
+        }
+        if (input != "y") {
+            sendto(udpsock, "N", 2, 0, (sockaddr*)&from, fromlen);  // Send rejection
+            cout << "Rejecting invitation..." << endl;
+            return 0;
+        }
+        sendto(udpsock, "Y", 2, 0, (sockaddr*)&from, fromlen);  // Send acceptance
+        cout << "Accepted invitation from " << opponent_username << "!" << endl;
+
+        // Receive the TCP port number for the game
+        int byteRecv = recv(udpsock, buf, sizeof(buf), 0);
+        buf[byteRecv]='\0';
+        cerr<<string(buf)<<endl;
+        int game_port=atoi(buf);
+
+        // 1. Create a socket (IPv4, TCP)
+        int sockfd=socket(AF_INET, SOCK_STREAM, 0);
+        if(sockfd==-1){
+            cerr<<"failed to create socket"<<endl;
+            return -1;
+        }
+        sockaddr_in opponentTCP;
+
+        opponentTCP.sin_family=AF_INET;
+        opponentTCP.sin_port=htons(game_port);
+        inet_pton(AF_INET, IP, &opponentTCP.sin_addr);
+
+        // 3. Connect to the server check for errors if connection fails
+        if(connect(sockfd,(sockaddr*)&opponentTCP, sizeof(opponentTCP))==-1){
+            cerr<<"connection failed"<<endl;
+            return -2;
+        }
+        cout << "Connected to server. Type messages and press Enter.\n";
+        return sockfd;  // Indicating successful invitation acceptance
     }
-    sendto(udpsock, "Y", 2, 0, (sockaddr*)&from, fromlen);  // Send acceptance
-    cout << "Accepted invitation from " << opponent_username << "!" << endl;
-
-    // Receive the TCP port number for the game
-    int byteRecv = recv(udpsock, buf, sizeof(buf), 0);
-    string game_port_msg(buf, 0, byteRecv);
-    int game_port = stoi(game_port_msg);
-
-    // 1. Create a socket (IPv4, TCP)
-    int sockfd=socket(AF_INET, SOCK_STREAM, 0);
-    if(sockfd==-1){
-        cerr<<"failed to create socket"<<endl;
-        return -1;
-    }
-    sockaddr_in opponentTCP;
-
-    opponentTCP.sin_family=AF_INET;
-    opponentTCP.sin_port=htons(game_port);
-    inet_pton(AF_INET, IP, &opponentTCP.sin_addr);
-
-    // 3. Connect to the server
-    //    - check for errors if connection fails
-    if(connect(sockfd,(sockaddr*)&opponentTCP, sizeof(opponentTCP))==-1){
-        cerr<<"connection failed"<<endl;
-        return -2;
-    }
-
-    // 4. Main loop:
-    //    - read input from user (cin / getline)
-    //    - if input == "quit", break
-    //    - send the input to the server
-    //    - recv response from server
-    //    - print server’s reply
-    cout << "Connected to server. Type messages and press Enter.\n";
-    return sockfd;  // Indicating successful invitation acceptance
+    return -1;
 }
 
 int report_game_result(int result, int state){//state 1:hosting, state 2:joining, result 1:win 0 lose
@@ -356,7 +374,7 @@ int main(){
         char buf[1024];
         int byteRecv=recv(lobbyfd,buf,sizeof(buf),0);
         buf[byteRecv]='\0';
-        cout<<buf<<endl;
+        // cout<<buf<<endl;
         if(buf[0]=='y')break;
         cout<<"failed to login, try again";
     }
@@ -375,7 +393,7 @@ int main(){
     FD_SET(udpSock,&master);
     FD_SET(lobbyfd,&master);
     int state=0, maxfd=max(udpSock,lobbyfd);
-    cout<<"start waiting for the game.\nyou can either type \'s\' to scan for available players\nand type \'i {name}\' for inviting the player for a game"<<endl;
+    cout<<"start waiting for the game.\nyou can either type \'s\' to scan for available players\nor type \'i {name}\' for inviting the player for a game"<<endl;
 
     /*
         inf loop for the following states
@@ -403,12 +421,13 @@ int main(){
                             break;
                         }
                         if(input=="s"){
+                            cout<<"start scanning..."<<endl;
                             if(scan_for_player(udpSock,udpForwardPort)<0){
                                 cerr<<"scan failed somehow"<<endl;
                                 return -10;
                             }
                             if(logined_players.size()<1){
-                                cout<<"you are the only one online, wait"<<endl;
+                                cout<<"you are the only one online, wait for another player"<<endl;
                                 continue;
                             }
                             cout<<"here's the available players"<<endl;
@@ -416,7 +435,8 @@ int main(){
                                 if(t.first==username)continue;
                                 cout<<t.first<<endl;
                             }
-                            cout<<"------------below are empty------------"<<endl;
+                            cout<<"-----------below are empty------------"<<endl;
+                            cout<<"\'s\' to scan for available players or \'i {name}\' for inviting the player for a game"<<endl;
                         }
                         else if(input[0]=='i'){
                             input=input.substr(2);
@@ -444,10 +464,10 @@ int main(){
                         }
                     }
                     else if(i==udpSock){//invitation from another player
-                        client_fd=got_invite(udpSock);
+                        client_fd=got_something(udpSock);
                         if(client_fd==-4)continue;
                         if(client_fd<0){
-                            cout<<"you are time out-ed"<<endl;
+                            cout<<"connection failed"<<endl;
                             continue;
                         }
                         cout<<"process to game"<<endl;

@@ -57,7 +57,7 @@ protected:
         // also write to socket (single character)
         char c = ch;
         if (send(sockfd, &c, 1, 0) == -1) {
-            // ignore errors for now
+            cerr<<"customized broadcasting error"<<endl;
         }
         return ch;
     }
@@ -91,7 +91,7 @@ protected:
 
         char c = ch;
         if (send(sockfd, &c, 1, 0) == -1) {
-            // you can handle errors here if you want
+            cerr<<"customized sendto failed"<<endl;
         }
         return ch;
     }
@@ -142,7 +142,7 @@ int client_game(int oppofd, string opponame){
             else{
                 buf[byteRecv] = '\0';
                 string st(buf);
-                cout<<st<<endl;
+                cout<<st;
             }
         }
     }
@@ -173,13 +173,13 @@ int host_game(int oppofd, string opponame){
     // 2. Pick a random word
     string secret = words[rand() % words.size()];
     int wordLen = secret.size();
-
+    broadcast  << "------------------------------------------"<<endl;
     broadcast  << "Welcome to the XaXb game!"<<endl;
     broadcast  << "I picked a word of length " << wordLen << ". Try to guess it!"<<endl;
 
     // Gameplay loop
     int turn,result;
-    for(turn=0; ;turn++){
+    for(turn=1; ;turn++){
         if(turn % 2){//host's turn
             string guess;
             cout << "Your guess: ";
@@ -192,7 +192,7 @@ int host_game(int oppofd, string opponame){
             }
 
             auto [a, b] = computeScore(secret, guess);
-            cout << a << "a" << b << "b\n";
+            cout <<"you guessed "<<guess <<" and got "<< a << "a" << b << "b\n";
             sendout << username << " guessed " << guess << " and got "<< a << "a" << b << "b\n";
 
             if (a == wordLen) {
@@ -201,7 +201,7 @@ int host_game(int oppofd, string opponame){
             }
         }
         else{//client's turn
-            sendout << "Your guess: ";
+            sendout << "It's your turn. Your guess: "<<endl;
 
             int byteRecv=recv(oppofd,buf,sizeof(buf),0);
             if(byteRecv==-1){
@@ -223,7 +223,7 @@ int host_game(int oppofd, string opponame){
             }
 
             auto [a, b] = computeScore(secret, guess);
-            sendout << a << "a" << b << "b\n";
+            sendout <<"you guessed "<<guess <<" and got "<< a << "a" << b << "b\n";
             cout << opponent_username << " guessed " << guess << " and got "<< a << "a" << b << "b\n";
 
             if (a == wordLen) {
