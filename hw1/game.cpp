@@ -248,7 +248,7 @@ int host_game(int oppofd, string opponame){
             cout << opponent_username << " guessed " << guess << " and got "<< a << "a" << b << "b\n";
 
             if (a == wordLen) {
-                broadcast << "Congratulations! "<<opponent_username <<" guessed the word: " << secret << "\n";
+                broadcast << "Congratulations! "<<opponent_username <<" guessed the word: " << secret << "\n-------------------------------\n";
                 return 2;
             }
         }

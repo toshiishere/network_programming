@@ -68,7 +68,7 @@ void look_up_history(){
     }
     string line;
     while (getline(inFile, line)) {
-        cout<<line;
+        cout<<line<<endl;
     }
     inFile.close();
 }

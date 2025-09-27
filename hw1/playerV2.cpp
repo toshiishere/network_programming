@@ -48,7 +48,7 @@ int bind_udp_in_range(int minPort, int maxPort, int &port) {
         addr.sin_port = htons(port);
 
         if (bind(sockfd, (sockaddr*)&addr, sizeof(addr)) == 0) {
-            cout << "Bound UDP socket on port " << port << "\n";
+            cerr << "Bound UDP socket on port " << port << "\n";
             return sockfd; // success
         }
         close(sockfd); // try next port
@@ -118,7 +118,7 @@ int scan_for_player(int udpsock, int udpForwardPort){
                     std::cerr << "Malformed UDP message: '" << buf << "'\n";
                 }
             } else if (n == 0) {
-                std::cerr << "recvfrom returned 0 (empty datagram)\n";
+                cerr << "recvfrom returned 0 (empty datagram)\n";
             } else {
                 perror("recvfrom failed");
             }
@@ -128,7 +128,7 @@ int scan_for_player(int udpsock, int udpForwardPort){
     }
     return 0;
 }
-//return client fd
+//return client fd, -1 if error, -2 if rejected, -3 if time out
 int send_invite_and_setup_server(int udpsock, int oppo_port){
     sockaddr_in opponent;
     opponent.sin_family=AF_INET;
@@ -147,8 +147,8 @@ int send_invite_and_setup_server(int udpsock, int oppo_port){
 
     while (1) {
         if(remaining_ms <= 0){
-            std::cout<<"timed out"<<endl;
-            return -1;
+            cout<<"timed out"<<endl;
+            return -3;
         }
 
         fd_set readfds;
@@ -166,7 +166,7 @@ int send_invite_and_setup_server(int udpsock, int oppo_port){
         } else if (rv == 0) {
             // Timeout: no data received within the specified time
             std::cout << "Timeout: No response received within 10 seconds." << endl;
-            return -2;
+            return -3;
         }
         
         if (FD_ISSET(udpsock, &readfds)) {
@@ -181,6 +181,10 @@ int send_invite_and_setup_server(int udpsock, int oppo_port){
                 if(buf[0]=='Y'){//fromPort==oppo_port &&   IDK if to add this
                     cout<<"invitation accepted, procede to sending TCP info"<<endl;
                     break;
+                }
+                if(buf[0]=='N'){
+                    cout<<"invitation rejected..."<<endl;
+                    return -2;
                 }
             }
         }
@@ -205,17 +209,17 @@ int send_invite_and_setup_server(int udpsock, int oppo_port){
     inet_pton(AF_INET, IP, &game_server.sin_addr);
     if(bind(listening, (sockaddr*)&game_server, sizeof(game_server))==-1){
         cerr<<"fail to bind";
-        return -2;
+        return -1;
     }
     if(listen(listening, SOMAXCONN)==-1){
         cerr<<"fail to listen";
-        return -3;
+        return -1;
     }
     sockaddr_in actual_addr{};
     socklen_t len = sizeof(actual_addr);
     if (getsockname(listening, (sockaddr*)&actual_addr, &len) == -1) {
         cerr << "getsockname failed";
-        return -4;
+        return -1;
     }
 
     string TCPinfo = to_string(ntohs(actual_addr.sin_port));
@@ -242,7 +246,8 @@ int send_invite_and_setup_server(int udpsock, int oppo_port){
     }
     else if (activity == 0) {
         cout << "Timeout: No connection after 10 seconds" << endl;
-        return -2;
+        close(listening);
+        return -3;
     }
     else {
         // A client is trying to connect, accept the connection
@@ -255,14 +260,15 @@ int send_invite_and_setup_server(int udpsock, int oppo_port){
             return -1;
         }
 
-        cout << "Client connected from " << inet_ntoa(client_addr.sin_addr)
+        cerr << "Client connected from " << inet_ntoa(client_addr.sin_addr)
              << ":" << ntohs(client_addr.sin_port) <<" connected successfully"<< endl;
     }
     close(listening);
     return client_fd;
 }
 
-int got_something(int udpsock){// retunr 0 if rejected, -1 if error, fd number if success, -4 if just be scanned
+// retunr 0 if rejecting, -1 if error, fd number if success, -4 if just be scanned, -2 time out
+int got_something(int udpsock){
     
     sockaddr_in from{};
     socklen_t fromlen = sizeof(from);
@@ -336,8 +342,7 @@ int got_something(int udpsock){// retunr 0 if rejected, -1 if error, fd number i
 }
 
 int report_game_result(int result, int state, int lobbyfd){//state 1:hosting, state 2:joining, result 1:win 0 lose
-    //TODO
-    if(result==2)return 0;
+    if(state==2)return 0;
     string winner, loser;
     if(result){
         winner=username;
@@ -392,7 +397,7 @@ int main(){
     }
     cout<<"login success, now you r in lobby"<<endl;
     
-    cout<<"creating UDP port for be scanned"<<endl;
+    cerr<<"creating UDP port for be scanned"<<endl;
     int udpForwardPort;
     int udpSock = bind_udp_in_range(MINUDPPORT, MAXUDPPORT,udpForwardPort);
     if (udpSock == -1) {
@@ -464,7 +469,7 @@ int main(){
                             opponent_username=input;
                             client_fd=send_invite_and_setup_server(udpSock, logined_players[input]);
                             if(client_fd<0){
-                                cout<<"you are either rejected or time out-ed"<<endl;
+                                if(client_fd==-3)cout<<"you are either time out-ed"<<endl;
                                 continue;
                             }
                             cout<<"process to game"<<endl;
@@ -483,7 +488,6 @@ int main(){
                             continue;
                         }
                         if(client_fd==0){
-                            cout<<"you are REJECTED, take shower dude"<<endl;
                             continue;
                         }
                         cout<<"process to game"<<endl;
@@ -515,7 +519,7 @@ int main(){
             }
             cout<<"you are back to lobby"<<endl;
             state=0;
-            close(client_fd);
+            shutdown(client_fd,SHUT_RDWR);
         }
 
     }
