@@ -207,7 +207,9 @@ int send_invite_and_setup_server(int udpsock, int oppo_port){
     game_server.sin_family=AF_INET;
     game_server.sin_port=0;
     inet_pton(AF_INET, IP, &game_server.sin_addr);
+    HANDLE:
     if(bind(listening, (sockaddr*)&game_server, sizeof(game_server))==-1){
+        if(errno==EADDRINUSE)goto HANDLE;//when conflict
         cerr<<"fail to bind";
         return -1;
     }
@@ -377,6 +379,7 @@ int main(){
     cout<<"welcome to game lobby. Please complete the login/register"<<endl;
 
     //choose login or register with username and passwd
+    char buf[1024];
     while(1){
         string input;
         cout<<"type something to login\nsyntax: \'[lr] {username} {passwd}\'"<<endl;
@@ -388,13 +391,16 @@ int main(){
         send(lobbyfd,input.c_str(),input.size(),0);
         //syntax: "[lr] {username} {passwd} {port}"
         //wait for confirm from server
-        char buf[1024];
+        
         int byteRecv=recv(lobbyfd,buf,sizeof(buf),0);
         buf[byteRecv]='\0';
         // cout<<buf<<endl;
         if(buf[0]=='y')break;
         cout<<"failed to login, try again";
     }
+    string msg(buf+2);
+    // cerr<<msg<<endl;
+    cout<<"you have been logined "<<msg<<" times"<<endl;
     cout<<"login success, now you r in lobby"<<endl;
     
     cerr<<"creating UDP port for be scanned"<<endl;
@@ -520,6 +526,7 @@ int main(){
             cout<<"you are back to lobby"<<endl;
             state=0;
             shutdown(client_fd,SHUT_RDWR);
+            close(client_fd);
         }
 
     }

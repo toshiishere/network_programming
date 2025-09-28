@@ -59,18 +59,47 @@ void browse_logined(int fd){
     send(fd, msg.c_str(), msg.size(), 0);
 }
 
+int update_login_count(string name){
+    std::ifstream infile(PLAYERFILE);
+    std::ofstream tempfile("temp.txt");
+
+    std::string word, passwd;
+    int value;
+
+    while (infile >> word >>passwd>> value) {
+        if (word == name) {
+            value ++; // modify here
+        }
+        tempfile << word << " " <<passwd<<" "<< value << "\n";
+    }
+
+    infile.close();
+    tempfile.close();
+
+    // Replace original file with temp file
+    remove(PLAYERFILE.c_str());
+    rename("temp.txt", PLAYERFILE.c_str());
+    return 1;
+}
+
 void look_up_history(){
-    cout<<"the former one win"<<endl;
+    map<string, int> wincount;
+    cout<<"Here's the list of win count"<<endl;
     ifstream inFile(HISTORYFILE);
     if (!inFile) {
         cerr << "Error opening file for reading!" << endl;
         return;
     }
-    string line;
+    string line,a,b,_;
     while (getline(inFile, line)) {
-        cout<<line<<endl;
+        stringstream ss(line);
+        ss>>a>>b>>_;
+        wincount[a]++;
     }
     inFile.close();
+    for(auto t:wincount){
+        cout<<t.first<<" has won "<<t.second<<" times"<<endl;
+    }
 }
 //0:success, -1:serious error, -2:wrong passwd, -3:player not found ,-4 register dulplicate, -5:other
 int login(vector<string> messages,int fd){
@@ -83,8 +112,9 @@ int login(vector<string> messages,int fd){
         string line;
         while (getline(inFile, line)) {
             string username, passwd;
+            int count;
             stringstream ss(line);
-            ss >> username >> passwd;
+            ss >> username >> passwd>> count;
             if(messages[1]==username){
                 if(messages[2]==passwd){
                     if(logined_players_set.find(messages[1])!=logined_players_set.end()){
@@ -94,8 +124,11 @@ int login(vector<string> messages,int fd){
                     logined_players.insert({fd, username});
                     logined_players_set.insert(username);
                     cout<<"player "<<username<<" log in successfully"<<endl;
-                    send(fd,"y",2,0);
+                    char msg[100];
+                    snprintf(msg,sizeof(msg),"y %d",count);
+                    send(fd,msg,strlen(msg),0);
                     alive_players[fd]=0;
+                    update_login_count(username);
                     return 0;
                 }
                 else{
@@ -131,13 +164,13 @@ int login(vector<string> messages,int fd){
             cerr << "Error opening file for writing!" << endl;
             return -1;
         }
-        outFile << messages[1]<<" "<<messages[2] << "\n";
+        outFile << messages[1]<<" "<<messages[2] << " 1"<< "\n";
         outFile.close();
 
         logined_players.insert({fd, messages[1]});
         logined_players_set.insert(messages[1]);
         cout<<"player "<<messages[1]<<" log in successfully"<<endl;
-        send(fd,"y",2,0);
+        send(fd,"y 0",4,0);
         alive_players[fd]=0;
         return 0;
     }

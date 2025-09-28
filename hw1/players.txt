@@ -1,4 +1,4 @@
-apple apple
-banana banana
-c c
-d d
+d d 2
+c c 1
+e e 1
+f f 2
