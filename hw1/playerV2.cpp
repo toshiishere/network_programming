@@ -393,6 +393,11 @@ int main(){
         //wait for confirm from server
         
         int byteRecv=recv(lobbyfd,buf,sizeof(buf),0);
+        if(byteRecv==0){
+            cout<<"server is down, closing everything"<<endl;
+            close(lobbyfd);
+            return 0;
+        }
         buf[byteRecv]='\0';
         // cout<<buf<<endl;
         if(buf[0]=='y')break;

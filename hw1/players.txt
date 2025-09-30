@@ -1,4 +1,4 @@
-d d 3
-c c 2
+d d 5
+c c 3
 e e 1
 f f 2
