@@ -284,6 +284,7 @@ int main(){
                         }
                         alive_players.erase(i);
                         FD_CLR(i,&master);
+                        close(i);
                     }
                     else{
                         buf[byteRecv] = '\0';
