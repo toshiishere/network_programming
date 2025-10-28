@@ -1,5 +1,4 @@
 #include <iostream>
-#include "nlohmann/json.hpp"
 #include<sys/types.h>
 #include <sys/epoll.h>
 #include<unistd.h>
@@ -10,7 +9,9 @@
 #include<string.h>
 #include<string>
 #include <netinet/in.h>
- 
+#include "utility.h"
+#include "nlohmann/json.hpp"
+
 using json = nlohmann::json;
 using namespace std;
 
@@ -56,7 +57,7 @@ int main() {
 
     epoll_event event{};
     event.data.fd = listen_sock;
-    event.events = EPOLLIN;  // ready to read (incoming connection)
+    event.events = EPOLLIN;  // ready to read
     epoll_ctl(epfd, EPOLL_CTL_ADD, listen_sock, &event);
 
     make_socket_non_blocking(STDIN_FILENO);
