@@ -22,55 +22,109 @@ const int DATA_SERVER_PORT=45631;
 // const char *IP="140.113.17.11";
 const char *IP="127.0.0.1";
 
-std::unordered_map<int, json> users;
-std::unordered_map<int, json> rooms;
-std::unordered_map<int, json> gameLogs;
+unordered_map<int, json> users;
+unordered_map<int, json> rooms;
+int user_cnt, room_cnt;
 
 // when ctrl+c 
 
-void save_to_disk(const std::string& filename, const json& data) {
-    std::ofstream file(filename);
-    file << data.dump(2);
+void saveUsers() {
+    json data = json::array();
+    for (const auto& [id, user] : users) {
+        data.push_back(user);
+    }
+    std::ofstream out("data/users.json");
+    if (!out.is_open()) {
+        std::cerr << "Error: could not open file for writing.\n";
+        return;
+    }
+    out << data.dump(4); // 4-space indentation for readability
+    out.close();
 }
 
-json load_from_disk(const std::string& filename) {
-    std::ifstream file(filename);
+unordered_map<int, json> loadUsers(const string& filename) {
+    unordered_map<int, json> users;
+    ifstream in(filename);
+
+    if (!in.is_open()) {
+        std::cerr << "Error: could not open " << filename << "\n";
+        return users;
+    }
+
     json data;
-    file >> data;
-    return data;
+    in >> data; // parse the array
+
+    for (auto user : data) {
+        int id = user.at("id").get<int>();
+        user["status"]="offline";
+        users[id] = user;
+    }
+    return users;
 }
+
 
 void signal_handler(int signum) {
     cout << "Caught signal " << signum << " (SIGINT). Exiting gracefully." << std::endl;
-    // Perform any necessary cleanup before exiting
+    saveUsers();
     exit(signum); 
 }
 
+//return id
+int op_create(string type,json data){
+    if(type=="user"){
+        data["id"]=user_cnt;
+        users.insert({user_cnt++,data});
+    }
+    else if(type=="room"){
+        data["id"]=room_cnt;
+        rooms.insert({room_cnt++,data});
+    }
+    else return -1;
+    return 0;
+}
+json op_query(string type, string name){
 
-
+}
 int main() {
 
     if (signal(SIGINT, signal_handler) == SIG_ERR) {
         printf("Failed to caught signal\n");
-    }//if other, then data is not saved
+    }//if other, then user data is not saved
+    users=loadUsers("data/users");
 
-    int sockfd=socket(AF_INET, SOCK_STREAM, 0);
+    int listen_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (listen_sock == -1) {
+        perror("socket");
+        return 1;
+    }
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    inet_pton(AF_INET,IP,&addr.sin_addr);
+    addr.sin_port = htons(DATA_SERVER_PORT);
+
+    if (bind(listen_sock, (sockaddr*)&addr, sizeof(addr)) == -1) {
+        perror("bind");
+        return 1;
+    }
+    if(listen(listen_sock,SOMAXCONN)==-1){
+        cerr<<"cannot listen";
+        return -3;
+    }
+
+    cout << "created data server. waiting for game server to connet\n";
+
+    sockaddr_in client;
+    socklen_t clientSize = sizeof(client);
+    int sockfd=accept(listen_sock,(sockaddr*)&client, &clientSize);
     if(sockfd==-1){
-        cerr<<"failed to create socket"<<endl;
-        return -1;
+        cerr<<"acceptance failed";
+        return -4;
     }
-    sockaddr_in server;
+    close(listen_sock);
 
-    server.sin_family=AF_INET;
-    server.sin_port=htons(DATA_SERVER_PORT);
-    inet_pton(AF_INET, IP, &server.sin_addr);
+    cout<<"game server connected, can be used anytime\n";
 
-    if(connect(sockfd,(sockaddr*)&server, sizeof(server))==-1){
-        cerr<<"connection failed"<<endl;
-        return -2;
-    }
-
-    cout << "Connected to server. Type messages and press Enter.\n";
     fd_set master, readfd;
     FD_ZERO(&master);
     FD_SET(sockfd, &master);
@@ -86,26 +140,39 @@ int main() {
         }
         if(FD_ISSET(sockfd,&readfd)){
             auto msgOpt = recv_message(sockfd);
-            if (!msgOpt.size()) return;//failed to get message
+            if (!msgOpt.size()) throw runtime_error("got empty msg");//failed to get message
 
-            try {
-                json request = json::parse(msgOpt);
-                std::string action = request["action"];
-                json payload = request["payload"];
-
-                if (action == "getUser") {
-                    int id = payload["id"];
-                    if (users.contains(id)) {
-                        send_message(sock, json({{"status","ok"}, {"data", users[id]}}).dump());
-                    } else {
-                        send_message(sock, json({{"status","error"}, {"message","User not found"}}).dump());
-                    }
+            json request = json::parse(msgOpt);
+            string action = request["action"];
+            string type = request["type"];
+            if(action=="create"){
+                json data=request[data];
+                int result_id=op_create(type,data);
+                json j;
+                if(result_id<0){
+                    j["response"]="failed";
+                    j["request"]=request;
                 }
-
-            } catch (std::exception& e) {
-                send_message(sock, json({{"status","error"},{"message", e.what()}}).dump());
+                else j["response"]="success";
+                send_message(sockfd,j.dump());
             }
+            else if(action=="query"){
+                string name=request["name"];
+                json j=op_query(type,name);
+                send_message(sockfd,j.dump());
+            }
+            else if(action=="search"){//search for available room/user
+                
+            }
+            else if(action=="update"){
 
+            }
+            else if(action=="delete"){
+
+            }
+            else{
+                cerr<<"you got a typo, find out why"<<endl;
+            }
         }
         
     }

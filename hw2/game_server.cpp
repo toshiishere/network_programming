@@ -47,6 +47,21 @@ int main() {
     }
 
     listen(listen_sock, SOMAXCONN);
+
+    //connect to data server
+    int datafd=socket(AF_INET, SOCK_STREAM, 0);
+    if(datafd<0)throw runtime_error("failed to create socket");
+    sockaddr_in server;
+    server.sin_family = AF_INET;
+    server.sin_port = htons(DATA_SERVER_PORT);
+    if (inet_pton(AF_INET, IP, &server.sin_addr) <= 0) {
+        cerr << "Invalid IP address\n";
+        return -2;
+    }
+    if (connect(datafd, (sockaddr*)&server, sizeof(server)) == -1) {
+        throw runtime_error("failed to connect to data server");
+    }
+
     make_socket_non_blocking(listen_sock);
 
     int epfd = epoll_create1(0);
