@@ -27,13 +27,12 @@ unordered_map<int, json> rooms;
 int user_cnt, room_cnt;
 
 // when ctrl+c 
-
 void saveUsers() {
     json data = json::array();
     for (const auto& [id, user] : users) {
         data.push_back(user);
     }
-    std::ofstream out("data/users.json");
+    ofstream out("data/users.json");
     if (!out.is_open()) {
         std::cerr << "Error: could not open file for writing.\n";
         return;
@@ -79,11 +78,98 @@ int op_create(string type,json data){
         data["id"]=room_cnt;
         rooms.insert({room_cnt++,data});
     }
+    else if(type=="gamelog"){
+        ofstream outfile("data/gamelog.json",ios_base::app);
+        if(!outfile.is_open()){
+            cerr<<"cannot open file"<<endl;
+            return -1;
+        }
+        outfile << data.dump()<<endl;
+        outfile.close();
+    }
     else return -1;
     return 0;
 }
 json op_query(string type, string name){
+    json j;
+    if(type=="user"){
+        for(auto tmp:users){
+            if (tmp.second.at(name).get<string>()==name){
+                j["response"]="success";
+                j["data"]=tmp.second;
+            }
+        }
+        if(j.empty()){
+            j["response"]="failed";
+            j["data"]="no such user exist";
+        }
+    }
+    else{
+        j["response"]="failed";
+        j["data"]="such category doesn't support";
+    }
+    return j;
+}
+//for searching online available room/users
+json op_search(string type){
+    json j;
+    json arr=json::array();
+    if(type=="user"){
+        for(auto tmp:users){
+            if(tmp.second.at("status").get<string>()=="idle"){
+                arr.push_back(tmp.second);
+            }
+        }
+        if(arr.empty()){
+            j["response"]="failed";
+            j["data"]="no player online";
+        }
+        else{
+            j["response"]="success";
+            j["data"]=arr;
+        }
+    }
+    else if(type=="room"){
+        for(auto tmp:rooms){
+            if(tmp.second.at("visibility").get<string>()=="public"){
+                arr.push_back(tmp.second);
+            }
+        }
+        if(arr.empty()){
+            j["response"]="failed";
+            j["data"]="no available room";
+        }
+        else{
+            j["response"]="success";
+            j["data"]=arr;
+        }
+    }
+    else{
+        j["response"]="failed";
+        j["data"]="no such type supported";
+    }
+    return j;
+}
+//for change one json of room
+int op_update(string type,json request){
+    if(type=="room"){
+        rooms[request.at("id").get<int>()]=request;
+        return 1;
+    }
+    else return -1;
+}
 
+//for ending of room
+int op_delete(string type, string name){
+    if(type=="room"){
+        for(auto tmp:rooms){
+            if(tmp.second.get<string>()=="name"){
+                rooms.erase(tmp.first);
+                return 1;
+            }
+        }
+    }
+    else return -1;
 }
 int main() {
 
@@ -147,9 +233,9 @@ int main() {
             string type = request["type"];
             if(action=="create"){
                 json data=request[data];
-                int result_id=op_create(type,data);
+                int result=op_create(type,data);
                 json j;
-                if(result_id<0){
+                if(result<0){
                     j["response"]="failed";
                     j["request"]=request;
                 }
@@ -162,13 +248,30 @@ int main() {
                 send_message(sockfd,j.dump());
             }
             else if(action=="search"){//search for available room/user
-                
+                json j=op_search(type);
+                send_message(sockfd, j.dump());
             }
             else if(action=="update"){
-
+                json request=request["data"];
+                int result=op_update(type,request);
+                json j;
+                if(result<0){
+                    j["response"]="failed";
+                    j["data"]=request;
+                }
+                else j["response"]="success";
+                send_message(sockfd,j.dump());
             }
             else if(action=="delete"){
-
+                string name=request["data"];
+                int result=op_delete(type,name);
+                json j;
+                if(result<0){
+                    j["response"]="failed";
+                    j["data"]=request;
+                }
+                else j["response"]="success";
+                send_message(sockfd,j.dump());
             }
             else{
                 cerr<<"you got a typo, find out why"<<endl;
