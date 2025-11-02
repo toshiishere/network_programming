@@ -169,14 +169,14 @@ int op_delete(string type, string name){
             }
         }
     }
-    else return -1;
+    return -1;
 }
 int main() {
 
     if (signal(SIGINT, signal_handler) == SIG_ERR) {
         printf("Failed to caught signal\n");
     }//if other, then user data is not saved
-    users=loadUsers("data/users");
+    users=loadUsers("data/users.json");
 
     int listen_sock = socket(AF_INET, SOCK_STREAM, 0);
     if (listen_sock == -1) {
@@ -227,6 +227,12 @@ int main() {
         if(FD_ISSET(sockfd,&readfd)){
             auto msgOpt = recv_message(sockfd);
             if (!msgOpt.size()) throw runtime_error("got empty msg");//failed to get message
+
+            if(msgOpt=="Disconnected"){
+                FD_CLR(sockfd, &master);
+                cout << "Game server disconnected\n";
+                break;
+            }
 
             json request = json::parse(msgOpt);
             string action = request["action"];
@@ -280,5 +286,6 @@ int main() {
         
     }
     close(sockfd);
+    saveUsers();
     return 0;
 }

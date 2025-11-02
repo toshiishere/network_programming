@@ -22,7 +22,7 @@ bool send_message(int sock, const std::string &msg) {
 std::string recv_message(int sock) {
     unsigned net_len;
     unsigned n = read(sock, &net_len, sizeof(net_len));
-    if (n == 0) return std::string(); // connection closed
+    if (n == 0) return "Disconnected"; // connection closed
     if (n != sizeof(net_len)) return std::string(); // incomplete header or error
     if (n>65536) return std::string(); //over max size
 
