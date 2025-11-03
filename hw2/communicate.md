@@ -36,6 +36,6 @@ respond with
     - invite:`{"response":"success/failed","reason":"no such user"}`
 
 # json format
-- `User`：`{ name, password, last_login, status("idle"|"playing"|"offline"), roomName}`
-- `Room`：`{ name, hostUser, visibility("public"|"private"), inviteList[user Ids], status("idle"|"playing")}`
+- `User`：`{ id, name, password, last_login, status("idle"|"playing"|"offline"), roomName}`
+- `Room`：`{ id, name, hostUser, visibility("public"|"private"), inviteList[user Ids], status("idle"|"playing")}`
 - `GameLog`（對局摘要與結果）：`{ id, matchId, roomId, users:[userId], startAt, endAt, results:[{userId, score, lines, maxCombo}] }`

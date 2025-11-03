@@ -24,11 +24,11 @@ TARGETS := data_server.out game_server.out
 all: $(TARGETS)
 
 # --- Individual builds ---
-data_server.out: data_server.cpp $(COMMON_SRCS) $(HEADERS)
+data_server.out: data_server.cpp $(COMMON_SRCS) $(HEADERS) 
 	$(CXX) $(CXXFLAGS) data_server.cpp $(COMMON_SRCS) -o $@
 
-game_server.out: game_server.cpp $(COMMON_SRCS) $(HEADERS)
-	$(CXX) $(CXXFLAGS) game_server.cpp $(COMMON_SRCS) -o $@
+game_server.out: game_server.cpp $(COMMON_SRCS) $(HEADERS) tetris.cpp tetris.h
+	$(CXX) $(CXXFLAGS) game_server.cpp $(COMMON_SRCS) tetris.cpp -o $@
 
 # --- Clean up ---
 clean:

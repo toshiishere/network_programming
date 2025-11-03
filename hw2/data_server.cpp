@@ -1,295 +1,243 @@
 #include <iostream>
 #include <fstream>
-#include<sys/types.h>
-#include <sys/epoll.h>
-#include<unistd.h>
-#include<sys/socket.h>
-#include<netdb.h>
-#include <fcntl.h>
-#include<arpa/inet.h>
-#include <string.h>
+#include <unordered_map>
 #include <string>
+#include <csignal>
+#include <sys/socket.h>
+#include <sys/types.h>
 #include <netinet/in.h>
-#include <csignal> // For signal() and SIGINT
+#include<arpa/inet.h>
+#include <unistd.h>
 #include "utility.h"
 #include "nlohmann/json.hpp"
 
 using json = nlohmann::json;
 using namespace std;
 
-const int GAME_SERVER_PORT=45632;
-const int DATA_SERVER_PORT=45631;
-// const char *IP="140.113.17.11";
-const char *IP="127.0.0.1";
+const int DATA_SERVER_PORT = 45631;
+const char *IP = "127.0.0.1";
 
 unordered_map<int, json> users;
 unordered_map<int, json> rooms;
-int user_cnt, room_cnt;
+int user_cnt = 0;
+int room_cnt = 0;
 
-// when ctrl+c 
+// --- Save and Load ---
 void saveUsers() {
     json data = json::array();
-    for (const auto& [id, user] : users) {
-        data.push_back(user);
-    }
+    for (auto &[id, user] : users) data.push_back(user);
     ofstream out("data/users.json");
     if (!out.is_open()) {
-        std::cerr << "Error: could not open file for writing.\n";
+        cerr << "[DataServer] Failed to open users.json for write\n";
         return;
     }
-    out << data.dump(4); // 4-space indentation for readability
+    out << data.dump(4);
     out.close();
+    cout << "[DataServer] Users saved.\n";
 }
 
-unordered_map<int, json> loadUsers(const string& filename) {
-    unordered_map<int, json> users;
+unordered_map<int, json> loadUsers(const string &filename) {
+    unordered_map<int, json> res;
     ifstream in(filename);
-
     if (!in.is_open()) {
-        std::cerr << "Error: could not open " << filename << "\n";
-        return users;
+        cerr << "[DataServer] No user file found, starting fresh.\n";
+        return res;
     }
-
     json data;
-    in >> data; // parse the array
-
-    for (auto user : data) {
-        int id = user.at("id").get<int>();
-        user["status"]="offline";
-        users[id] = user;
+    try {
+        in >> data;
+        for (auto &u : data) {
+            int id = u.at("id").get<int>();
+            u["status"] = "offline";
+            res[id] = u;
+            user_cnt = max(user_cnt, id + 1);
+        }
+    } catch (...) {
+        cerr << "[DataServer] Failed to parse user file.\n";
     }
-    return users;
+    return res;
 }
 
-
-void signal_handler(int signum) {
-    cout << "Caught signal " << signum << " (SIGINT). Exiting gracefully." << std::endl;
-    saveUsers();
-    exit(signum); 
-}
-
-//return id
-int op_create(string type,json data){
-    if(type=="user"){
-        data["id"]=user_cnt;
-        users.insert({user_cnt++,data});
-    }
-    else if(type=="room"){
-        data["id"]=room_cnt;
-        rooms.insert({room_cnt++,data});
-    }
-    else if(type=="gamelog"){
-        ofstream outfile("data/gamelog.json",ios_base::app);
-        if(!outfile.is_open()){
-            cerr<<"cannot open file"<<endl;
-            return -1;
-        }
-        outfile << data.dump()<<endl;
-        outfile.close();
-    }
-    else return -1;
-    return 0;
-}
-json op_query(string type, string name){
-    json j;
-    if(type=="user"){
-        for(auto tmp:users){
-            if (tmp.second.at("name").get<string>()==name){
-                j["response"]="success";
-                j["data"]=tmp.second;
-            }
-        }
-        if(j.empty()){
-            j["response"]="failed";
-            j["data"]="no such user exist";
-        }
-    }
-    else{
-        j["response"]="failed";
-        j["data"]="such category doesn't support";
-    }
-    return j;
-}
-//for searching online available room/users
-json op_search(string type){
-    json j;
-    json arr=json::array();
-    if(type=="user"){
-        for(auto tmp:users){
-            if(tmp.second.at("status").get<string>()=="idle"){
-                arr.push_back(tmp.second);
-            }
-        }
-        if(arr.empty()){
-            j["response"]="failed";
-            j["data"]="no player online";
-        }
-        else{
-            j["response"]="success";
-            j["data"]=arr;
-        }
-    }
-    else if(type=="room"){
-        for(auto tmp:rooms){
-            if(tmp.second.at("visibility").get<string>()=="public"){
-                arr.push_back(tmp.second);
-            }
-        }
-        if(arr.empty()){
-            j["response"]="failed";
-            j["data"]="no available room";
-        }
-        else{
-            j["response"]="success";
-            j["data"]=arr;
-        }
-    }
-    else{
-        j["response"]="failed";
-        j["data"]="no such type supported";
-    }
-    return j;
-}
-//for change one json of room
-int op_update(string type,json request){
-    if(type=="room"){
-        rooms[request.at("id").get<int>()]=request;
+// --- Core Operations ---
+int op_create(const string &type, json data) {
+    if (type == "user") {
+        data["id"] = user_cnt++;
+        users[data["id"]] = data;
+        return 1;
+    } else if (type == "room") {
+        data["id"] = room_cnt++;
+        rooms[data["id"]] = data;
+        return 1;
+    } else if (type == "gamelog") {
+        ofstream out("data/gamelog.json", ios::app);
+        if (!out.is_open()) return -1;
+        out << data.dump() << endl;
         return 1;
     }
-    if (type=="user") { 
-        users[request.at("id").get<int>()] = request;
-        return 1; 
-    }
-
-    else return -1;
+    return -1;
 }
 
-//for ending of room
-int op_delete(string type, string name){
-    if(type=="room"){
-        for(auto tmp:rooms){
-            if(tmp.second.value("name","") == name){
-                rooms.erase(tmp.first);
+json op_query(const string &type, const string &name) {
+    json res;
+    if (type == "user") {
+        for (auto &[id, user] : users) {
+            if (user.value("name", "") == name) {
+                res["response"] = "success";
+                res["data"] = user;
+                return res;
+            }
+        }
+        res["response"] = "failed";
+        res["reason"] = "no such user";
+    } else {
+        res["response"] = "failed";
+        res["reason"] = "unsupported type";
+    }
+    return res;
+}
+
+json op_search(const string &type) {
+    json arr = json::array(), res;
+    if (type == "user") {
+        for (auto &[id, user] : users)
+            if (user.value("status", "") == "idle") arr.push_back(user);
+        res["response"] = arr.empty() ? "failed" : "success";
+        res["data"] = arr.empty() ? json{"no user online"} : arr;
+    } else if (type == "room") {
+        for (auto &[id, room] : rooms)
+            if (room.value("visibility", "") == "public") arr.push_back(room);
+        res["response"] = arr.empty() ? "failed" : "success";
+        res["data"] = arr.empty() ? json{"no available room"} : arr;
+    } else {
+        res["response"] = "failed";
+        res["reason"] = "unsupported type";
+    }
+    return res;
+}
+
+int op_update(const string &type, json data) {
+    if (!data.contains("id") || data["id"].is_null()) return -1;
+    int id = data["id"].get<int>();
+    if (type == "user" && users.count(id)) {
+        users[id] = data;
+        return 1;
+    } else if (type == "room" && rooms.count(id)) {
+        rooms[id] = data;
+        return 1;
+    }
+    return -1;
+}
+
+int op_delete(const string &type, const string &name) {
+    if (type == "room") {
+        for (auto it = rooms.begin(); it != rooms.end(); ++it) {
+            if (it->second.value("name", "") == name) {
+                rooms.erase(it);
                 return 1;
             }
         }
     }
     return -1;
 }
+
+// --- Signal handler ---
+void signal_handler(int) {
+    cout << "\n[DataServer] Caught SIGINT, saving users and exiting.\n";
+    saveUsers();
+    exit(0);
+}
+
+// --- Main server loop ---
 int main() {
+    signal(SIGINT, signal_handler);
+    users = loadUsers("data/users.json");
 
-    if (signal(SIGINT, signal_handler) == SIG_ERR) {
-        printf("Failed to caught signal\n");
-    }//if other, then user data is not saved
-    users=loadUsers("data/users.json");
-
-    int listen_sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (listen_sock == -1) {
+    int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (listen_fd < 0) {
         perror("socket");
         return 1;
     }
 
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
-    inet_pton(AF_INET,IP,&addr.sin_addr);
     addr.sin_port = htons(DATA_SERVER_PORT);
+    inet_pton(AF_INET, IP, &addr.sin_addr);
 
-    if (bind(listen_sock, (sockaddr*)&addr, sizeof(addr)) == -1) {
+    if (bind(listen_fd, (sockaddr *)&addr, sizeof(addr)) < 0) {
         perror("bind");
         return 1;
     }
-    if(listen(listen_sock,SOMAXCONN)==-1){
-        cerr<<"cannot listen";
-        return -3;
+
+    listen(listen_fd, SOMAXCONN);
+    cout << "[DataServer] Listening on " << IP << ":" << DATA_SERVER_PORT << " ...\n";
+
+    sockaddr_in client{};
+    socklen_t len = sizeof(client);
+    int sockfd = accept(listen_fd, (sockaddr *)&client, &len);
+    if (sockfd < 0) {
+        perror("accept");
+        return 1;
     }
+    cout << "[DataServer] Connected to game server.\n";
+    close(listen_fd);
 
-    cout << "created data server. waiting for game server to connet\n";
+    while (true) {
+        string msg = recv_message(sockfd);
+        if (msg.empty() || msg == "Disconnected") {
+            cout << "[DataServer] Game server disconnected.\n";
+            break;
+        }
 
-    sockaddr_in client;
-    socklen_t clientSize = sizeof(client);
-    int sockfd=accept(listen_sock,(sockaddr*)&client, &clientSize);
-    if(sockfd==-1){
-        cerr<<"acceptance failed";
-        return -4;
-    }
-    close(listen_sock);
-
-    cout<<"game server connected, can be used anytime\n";
-
-    fd_set master, readfd;
-    FD_ZERO(&master);
-    FD_SET(sockfd, &master);
-    int fdmax = max(STDIN_FILENO, sockfd);
-    char buf[4096];
-    string input;
-
-    while(1){
-        readfd=master;
-        if(select(fdmax+1,&readfd,NULL,NULL,NULL)==-1){
-            cerr<<"select failed"<<endl;
+        json request;
+        try {
+            request = json::parse(msg);
+        } catch (const exception &e) {
+            cerr << "[DataServer] Invalid JSON: " << e.what() << "\nRaw: " << msg << endl;
             continue;
         }
-        if(FD_ISSET(sockfd,&readfd)){
-            auto msgOpt = recv_message(sockfd);
-            if (!msgOpt.size()) throw runtime_error("got empty msg");//failed to get message
 
-            if(msgOpt=="Disconnected"){
-                FD_CLR(sockfd, &master);
-                cout << "Game server disconnected\n";
-                break;
-            }
+        string action = request.value("action", "");
+        string type = request.value("type", "");
+        json response;
 
-            json request = json::parse(msgOpt);
-            string action = request["action"];
-            string type = request["type"];
-            if(action=="create"){
-                json data=request[data];
-                int result=op_create(type,data);
-                json j;
-                if(result<0){
-                    j["response"]="failed";
-                    j["request"]=request;
-                }
-                else j["response"]="success";
-                send_message(sockfd,j.dump());
+        try {
+            if (action == "create") {
+                json data = request["data"].is_string() ? json::parse(request["data"].get<string>()) : request["data"];
+                int result = op_create(type, data);
+                response["response"] = result > 0 ? "success" : "failed";
+                if (result <= 0) response["reason"] = "create failed";
+            } 
+            else if (action == "query") {
+                string name = request.value("name", "");
+                response = op_query(type, name);
+            } 
+            else if (action == "search") {
+                response = op_search(type);
+            } 
+            else if (action == "update") {
+                json data = request["data"].is_string() ? json::parse(request["data"].get<string>()) : request["data"];
+                int result = op_update(type, data);
+                response["response"] = result > 0 ? "success" : "failed";
+                if (result <= 0) response["reason"] = "update failed";
+            } 
+            else if (action == "delete") {
+                string name = request["data"].is_string() ? request["data"].get<string>() : "";
+                int result = op_delete(type, name);
+                response["response"] = result > 0 ? "success" : "failed";
+                if (result <= 0) response["reason"] = "delete failed";
+            } 
+            else {
+                response["response"] = "failed";
+                response["reason"] = "unknown action";
             }
-            else if(action=="query"){
-                string name=request["name"];
-                json j=op_query(type,name);
-                send_message(sockfd,j.dump());
-            }
-            else if(action=="search"){//search for available room/user
-                json j=op_search(type);
-                send_message(sockfd, j.dump());
-            }
-            else if(action=="update"){
-                json request=request["data"];
-                int result=op_update(type,request);
-                json j;
-                if(result<0){
-                    j["response"]="failed";
-                    j["data"]=request;
-                }
-                else j["response"]="success";
-                send_message(sockfd,j.dump());
-            }
-            else if(action=="delete"){
-                string name=request["data"];
-                int result=op_delete(type,name);
-                json j;
-                if(result<0){
-                    j["response"]="failed";
-                    j["data"]=request;
-                }
-                else j["response"]="success";
-                send_message(sockfd,j.dump());
-            }
-            else{
-                cerr<<"you got a typo, find out why"<<endl;
-            }
+        } catch (const exception &e) {
+            cerr << "[DataServer] Exception in action handler: " << e.what() << endl;
+            response = {{"response", "failed"}, {"reason", e.what()}};
         }
-        
+
+        send_message(sockfd, response.dump());
     }
+
     close(sockfd);
     saveUsers();
     return 0;
