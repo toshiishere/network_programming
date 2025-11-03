@@ -94,7 +94,7 @@ json op_query(string type, string name){
     json j;
     if(type=="user"){
         for(auto tmp:users){
-            if (tmp.second.at(name).get<string>()==name){
+            if (tmp.second.at("name").get<string>()==name){
                 j["response"]="success";
                 j["data"]=tmp.second;
             }
@@ -156,6 +156,11 @@ int op_update(string type,json request){
         rooms[request.at("id").get<int>()]=request;
         return 1;
     }
+    if (type=="user") { 
+        users[request.at("id").get<int>()] = request;
+        return 1; 
+    }
+
     else return -1;
 }
 
@@ -163,7 +168,7 @@ int op_update(string type,json request){
 int op_delete(string type, string name){
     if(type=="room"){
         for(auto tmp:rooms){
-            if(tmp.second.get<string>()=="name"){
+            if(tmp.second.value("name","") == name){
                 rooms.erase(tmp.first);
                 return 1;
             }

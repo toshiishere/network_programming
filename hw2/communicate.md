@@ -15,21 +15,27 @@ example:
 - `{"action":"delete","type":"room","data":"room name"}`
 
 respond with
-- create:`{"response":"success/failed","data":"request, only if failed"}`
-- query:`{"response":"success/failed","data":""}` //data include reason if failed
-- update:`{"response":"success/failed","data":"request, only if failed"}`
-- search:`{"response":"success/failed","data":[datas]}`
-- delete:`{"response":"success/failed","data":"request, only if failed"}`
+- create:`{"response":"success/failed","reason":"request, only if failed"}`
+- query:`{"response":"success/failed","data/reason":""}` //data include reason if failed
+- update:`{"response":"success/failed","reason":"only if failed"}`
+- search:`{"response":"success/failed","data/reason":[datas]}`
+- delete:`{"response":"success/failed","reason":"request, only if failed"}`
 
 # client server communication
 
 - login:`{"action":"login/register","name":"name","password":"password"}`
-- lobby:`{"action":"create/curroom/curinvite/join/invite","room":"roomname"}`
+- lobby:`{"action":"create/curroom/curinvite/join/invite","room":"roomname","user":"username"}`
+    - if`{create}`, add attribute of `{visibility}`
 
 - response of login:`{"response":"success"}` or `{"response":"failed","reason":"wrong passwd/dulplicate user"}`
-- response of lobby:`{"response":"success/failed","reason":"no such room/user / dulplicate room name"}`
+- response of lobby: reason only exist if failed
+    - create:`{"response":"success/failed","reason":"dulplicate room"}`
+    - curroom:`{"response":"success/failed","data":[rooms]}`
+    - curinvite:`{"response":"success/failed","data":[rooms]}`
+    - join:`{"response":"success/failed","reason":"no such room"}`
+    - invite:`{"response":"success/failed","reason":"no such user"}`
 
 # json format
-- `User`：`{ name, password, last_login, status("idle"|"playing"|"offline")}`
-- `Room`：`{ name, hostUserId, visibility("public"|"private"), inviteList[user Ids], status("idle"|"playing")}`
+- `User`：`{ name, password, last_login, status("idle"|"playing"|"offline"), roomName}`
+- `Room`：`{ name, hostUser, visibility("public"|"private"), inviteList[user Ids], status("idle"|"playing")}`
 - `GameLog`（對局摘要與結果）：`{ id, matchId, roomId, users:[userId], startAt, endAt, results:[{userId, score, lines, maxCombo}] }`
