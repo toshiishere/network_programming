@@ -30,6 +30,6 @@ respond with
 - response of lobby:`{"response":"success/failed","reason":"no such room/user / dulplicate room name"}`
 
 # json format
-- `User`：`{ id, name, password, last_login, status("idle"|"playing"|"offline")}`
-- `Room`：`{ id, name, hostUserId, visibility("public"|"private"), inviteList[user Ids], status("idle"|"playing")}`
+- `User`：`{ name, password, last_login, status("idle"|"playing"|"offline")}`
+- `Room`：`{ name, hostUserId, visibility("public"|"private"), inviteList[user Ids], status("idle"|"playing")}`
 - `GameLog`（對局摘要與結果）：`{ id, matchId, roomId, users:[userId], startAt, endAt, results:[{userId, score, lines, maxCombo}] }`

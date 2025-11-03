@@ -3,3 +3,4 @@
 
 bool send_message(int sock, const std::string &msg);
 std::string recv_message(int sock);
+std::string now_time_str();

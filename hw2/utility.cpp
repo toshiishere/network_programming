@@ -2,6 +2,9 @@
 #include <unistd.h>
 #include <string>
 #include <vector>
+#include <ctime>
+#include <sstream>
+#include <iomanip>
 
 bool send_message(int sock, const std::string &msg) {
     unsigned len = msg.size();
@@ -37,4 +40,12 @@ std::string recv_message(int sock) {
     }
 
     return std::string(buffer.begin(), buffer.end());
+}
+std::string now_time_str() {
+    std::time_t t = std::time(nullptr);
+    std::tm tm;
+    localtime_r(&t, &tm);
+    std::ostringstream oss;
+    oss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
+    return oss.str();
 }

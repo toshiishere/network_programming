@@ -1,5 +1,4 @@
 #!/usr/bin/python3
-import sys
 import socket, struct, json, sys, time, select
 import pygame
 
