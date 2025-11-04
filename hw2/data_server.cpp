@@ -90,6 +90,9 @@ int op_create(const string &type, json data) {
     } else if (type == "room") {
         data["id"] = room_cnt++;
         rooms[data["id"]] = data;
+        cerr << "[DataServer] Created room: " << data.value("name", "(unnamed)")
+             << " (id=" << data["id"] << ", host=" << data.value("hostUser", "(unknown)")
+             << ", visibility=" << data.value("visibility", "public") << ")" << endl;
         return data["id"];
     } else if (type == "gamelog") {
         ofstream out("data/gamelog.json", ios::app);
@@ -111,26 +114,56 @@ json op_query(const string &type, const json &request) {
     // query by name or id
     string name = request.value("name", "");
     int id = request.value("id", -1);
-    cerr<<"querying "<<type<<" with name="<<name<<" id="<<id<<endl;
-    if (id >= 0 && users.count(id)) {
-        res["response"] = "success";
-        res["data"] = users[id];
-        cerr<<"response with id, data:"<<res.dump()<<endl;
+    // cerr<<"querying "<<type<<" with name="<<name<<" id="<<id<<endl;
+
+    if (type == "user") {
+        if (id >= 0 && users.count(id)) {
+            res["response"] = "success";
+            res["data"] = users[id];
+            // cerr<<"response with id, data:"<<res.dump()<<endl;
+            return res;
+        }
+
+        if (!name.empty()) {
+            for (auto &[uid, user] : users) {
+                if (user.value("name", "") == name) {
+                    res["response"] = "success";
+                    res["data"] = user;
+                    return res;
+                }
+            }
+        }
+
+        res["response"] = "failed";
+        res["reason"] = "no such user";
+        return res;
+    } else if (type == "room") {
+        if (id >= 0 && rooms.count(id)) {
+            res["response"] = "success";
+            res["data"] = rooms[id];
+            cerr << "[DataServer] Queried room by id=" << id << ": " << rooms[id].value("name", "(unnamed)") << endl;
+            return res;
+        }
+
+        if (!name.empty()) {
+            for (auto &[rid, room] : rooms) {
+                if (room.value("name", "") == name) {
+                    res["response"] = "success";
+                    res["data"] = room;
+                    cerr << "[DataServer] Queried room by name='" << name << "' (id=" << room.value("id", -1) << ")" << endl;
+                    return res;
+                }
+            }
+        }
+
+        res["response"] = "failed";
+        res["reason"] = "no such room";
+        cerr << "[DataServer] Query room failed: " << (id >= 0 ? "id=" + to_string(id) : "name='" + name + "'") << " not found" << endl;
         return res;
     }
 
-    if (!name.empty()) {
-        for (auto &[uid, user] : users) {
-            if (user.value("name", "") == name) {
-                res["response"] = "success";
-                res["data"] = user;
-                return res;
-            }
-        }
-    }
-
     res["response"] = "failed";
-    res["reason"] = "no such user";
+    res["reason"] = "unexpected error";
     return res;
 }
 
@@ -141,13 +174,23 @@ json op_search(const string &type) {
             if (user.value("status", "") == "idle")
                 arr.push_back(user);
         res["response"] = arr.empty() ? "failed" : "success";
-        res["data"] = arr.empty() ? json{"no user online"} : arr;
+        if (arr.empty()) {
+            res["reason"] = "no user online";
+        } else {
+            res["data"] = arr;
+        }
     } else if (type == "room") {
         for (auto &[id, room] : rooms)
             if (room.value("visibility", "") == "public")
                 arr.push_back(room);
         res["response"] = arr.empty() ? "failed" : "success";
-        res["data"] = arr.empty() ? json{"no available room"} : arr;
+        if (arr.empty()) {
+            res["reason"] = "no available room";
+            cerr << "[DataServer] Search rooms: no public rooms available" << endl;
+        } else {
+            res["data"] = arr;
+            cerr << "[DataServer] Search rooms: found " << arr.size() << " public room(s)" << endl;
+        }
     } else {
         res["response"] = "failed";
         res["reason"] = "unsupported type";
@@ -178,6 +221,8 @@ int op_update(const string &type, json data) {
         return 1;
     } else if (type == "room" && rooms.count(id)) {
         rooms[id] = data;
+        cerr << "[DataServer] Updated room id=" << id << " (" << data.value("name", "(unnamed)")
+             << ", status=" << data.value("status", "idle") << ")" << endl;
         return 1;
     }
 
@@ -190,10 +235,12 @@ int op_delete(const string &type, const string &name) {
     if (type == "room") {
         for (auto it = rooms.begin(); it != rooms.end(); ++it) {
             if (it->second.value("name", "") == name) {
+                cerr << "[DataServer] Deleted room: " << name << " (id=" << it->first << ")" << endl;
                 rooms.erase(it);
                 return 1;
             }
         }
+        cerr << "[DataServer] Delete room failed: '" << name << "' not found" << endl;
     }
     return -1;
 }
@@ -246,7 +293,7 @@ int main() {
             cout << "[DataServer] Game server disconnected.\n";
             break;
         }
-        cerr<<msg<<endl;
+        // cerr<<msg<<endl;
         json request;
         try {
             request = json::parse(msg);

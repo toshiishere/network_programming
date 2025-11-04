@@ -24,8 +24,9 @@ respond with
 # client server communication
 
 - login:`{"action":"login/register","name":"name","password":"password"}`
-- lobby:`{"action":"create/curroom/curinvite/join/invite","room":"roomname","user":"username"}`
+- lobby:`{"action":"create/curroom/curinvite/join/invite","roomname":"john"}`
     - if`{create}`, add attribute of `{visibility}`
+  
 
 - response of login:`{"response":"success"}` or `{"response":"failed","reason":"wrong passwd/dulplicate user"}`
 - response of lobby: reason only exist if failed

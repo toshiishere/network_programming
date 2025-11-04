@@ -39,7 +39,7 @@ int logining(int fd, const std::string &action, const std::string &name, const s
         send_message(fd, json{{"response", "failed"}, {"reason", "data server unavailable"}}.dump());
         return -1;
     }
-    cerr<<"reply of logining "<<reply<<endl;
+    // cerr<<"reply of logining "<<reply<<endl;
     json resp;
     try {
         resp = json::parse(reply);
@@ -48,7 +48,7 @@ int logining(int fd, const std::string &action, const std::string &name, const s
         send_message(fd, json{{"response", "failed"}, {"reason", "invalid JSON from data server"}}.dump());
         return -1;
     }
-
+     
     std::string status = resp.value("response", "failed");
 
     // --- Step 2. Handle found user ---
@@ -77,6 +77,7 @@ int logining(int fd, const std::string &action, const std::string &name, const s
                     {"data", user}
                 };
                 send_message(datafd, update.dump());
+                string update_reply = recv_message(datafd);  // Consume the update response
 
                 json ok = {{"response", "success"}};
                 send_message(fd, ok.dump());
@@ -170,9 +171,8 @@ int logout_user(int fd) {
         {"id", uid}
     };
     send_message(datafd, query.dump());
-    recv_message(datafd);// BIG ISSUE,
     string reply = recv_message(datafd);
-    cerr<<reply<<endl;
+    // cerr<<reply<<endl;
     if (reply.empty() || reply == "Disconnected") {
         cerr << "[GameServer] Data server not responding during logout.\n";
         return -1;
@@ -250,57 +250,189 @@ int client_request(int fd,const string&msg){
     int uid=logineds[fd];
     string act=j["action"];
     // query self
-    send_message(datafd,json{{"action","query"},{"type","user"},{"name",j["name"]}}.dump());
-    json me=json::parse(recv_message(datafd))["data"];me["id"]=uid;
+    send_message(datafd,json{{"action","query"},{"type","user"},{"id",uid}}.dump());
+    string self_reply = recv_message(datafd);
+    json self_resp = json::parse(self_reply);
+    if(self_resp.value("response", "failed") != "success" || !self_resp.contains("data")) {
+        send_message(fd,json{{"response","failed"},{"reason","failed to query user"}}.dump());
+        return 0;
+    }
+    json me = self_resp["data"];
+    me["id"]=uid;
 
     if(act=="create"){ // room
-        string room=j["room"],vis=j.value("visibility","public");
-        json check={{"action","search"},{"type","room"}};send_message(datafd,check.dump());
-        json r=json::parse(recv_message(datafd));for(auto &x:r["data"])
-            if(x["name"]==room){send_message(fd,json{{"response","failed"},{"reason","duplicate room"}}.dump());return 0;}
+        string room=j["roomname"];
+        string vis=j.value("visibility","public");
+        cerr << "[GameServer] User '" << me["name"] << "' attempting to create room '" << room << "' (visibility=" << vis << ")" << endl;
+        json check={{"action","search"},{"type","room"}};
+        send_message(datafd,check.dump());
+        json r=json::parse(recv_message(datafd));
+        if(r.contains("data") && r["data"].is_array()) {
+            for(auto &x:r["data"])
+                if(x["name"]==room){
+                    cerr << "[GameServer] Room creation failed: room '" << room << "' already exists" << endl;
+                    send_message(fd,json{{"response","failed"},{"reason","duplicate room"}}.dump());
+                    return 0;
+                }
+        }
         json newroom={{"name",room},{"hostUser",me["name"]},{"visibility",vis},{"inviteList",json::array()},{"status","idle"}};
         send_message(datafd,json{{"action","create"},{"type","room"},{"data",newroom}}.dump());
+        string create_reply = recv_message(datafd);
+        json create_resp = json::parse(create_reply);
+        if(create_resp.value("response", "failed") != "success") {
+            cerr << "[GameServer] Room creation failed: data server error" << endl;
+            send_message(fd,json{{"response","failed"},{"reason","failed to create room"}}.dump());
+            return 0;
+        }
         send_message(datafd,json{{"action","query"},{"type","room"},{"name",room}}.dump());
-        json qr=json::parse(recv_message(datafd));
-        me["roomId"]=qr["data"]["id"];me["status"]="playing";
+        string query_reply = recv_message(datafd);
+        json qr=json::parse(query_reply);
+        if(qr.value("response", "failed") != "success" || !qr.contains("data")) {
+            send_message(fd,json{{"response","failed"},{"reason","room query failed"}}.dump());
+            return 0;
+        }
+        me["roomname"]=room;
+        me["status"]="playing";
         send_message(datafd,json{{"action","update"},{"type","user"},{"data",me}}.dump());
+        recv_message(datafd);  // Consume update response
+        cout << "[GameServer] User '" << me["name"] << "' successfully created and joined room '" << room << "'" << endl;
         send_message(fd,json{{"response","success"}}.dump());return 1;
     }
     else if(act=="join"){
-        string room=j["room"];json s={{"action","search"},{"type","room"}};send_message(datafd,s.dump());
+        string room=j["roomname"];
+        cerr << "[GameServer] User '" << me["name"] << "' attempting to join room '" << room << "'" << endl;
+        json s={{"action","search"},{"type","room"}};send_message(datafd,s.dump());
         json sres=json::parse(recv_message(datafd));json target;
-        for(auto&r:sres["data"])if(r["name"]==room)target=r;
-        if(target.empty()){send_message(fd,json{{"response","failed"},{"reason","no such room"}}.dump());return 0;}
-        if(target["status"]=="playing"){send_message(fd,json{{"response","failed"},{"reason","busy"}}.dump());return 0;}
-        me["roomId"]=target["id"];me["status"]="playing";
+        if(sres.contains("data") && sres["data"].is_array()) {
+            for(auto&r:sres["data"])if(r["name"]==room)target=r;
+        }
+        if(target.empty()){
+            cerr << "[GameServer] Join room failed: room '" << room << "' not found" << endl;
+            send_message(fd,json{{"response","failed"},{"reason","no such room"}}.dump());
+            return 0;
+        }
+        if(target["status"]=="playing"){
+            cerr << "[GameServer] Join room failed: room '" << room << "' is busy" << endl;
+            send_message(fd,json{{"response","failed"},{"reason","busy"}}.dump());
+            return 0;
+        }
+        me["roomname"]=room;me["status"]="playing";
         send_message(datafd,json{{"action","update"},{"type","user"},{"data",me}}.dump());
+        recv_message(datafd);  // Consume update response
+        cout << "[GameServer] User '" << me["name"] << "' successfully joined room '" << room << "'" << endl;
         send_message(fd,json{{"response","success"}}.dump());return 1;
     }
     else if(act=="curroom"){
-        if(me["roomId"]==-1){send_message(fd,json{{"response","failed"},{"reason","not in room"}}.dump());return 0;}
-        send_message(datafd,json{{"action","query"},{"type","room"},{"name",j.value("room","")}}.dump());
-        json q=json::parse(recv_message(datafd));
-        send_message(fd,json{{"response","success"},{"data",json::array({q["data"]})}}.dump());return 1;
+        string current_room = me.value("roomname", "-1");
+        cerr << "[GameServer] User '" << me["name"] << "' querying current room" << endl;
+        if(current_room == "-1"){
+            // User not in a room - show all public rooms
+            cerr << "[GameServer] User not in room, listing all public rooms" << endl;
+            send_message(datafd,json{{"action","search"},{"type","room"}}.dump());
+            string search_reply = recv_message(datafd);
+            json search_res = json::parse(search_reply);
+            if(search_res.value("response", "failed") == "success" && search_res.contains("data")) {
+                cout << "[GameServer] Retrieved " << search_res["data"].size() << " public rooms for user '" << me["name"] << "'" << endl;
+                send_message(fd,json{{"response","success"},{"data",search_res["data"]}}.dump());
+            } else {
+                cerr << "[GameServer] Room search failed or no public rooms available" << endl;
+                send_message(fd,json{{"response","failed"},{"reason",search_res.value("reason", "no available room")}}.dump());
+            }
+            return 1;
+        }
+        send_message(datafd,json{{"action","query"},{"type","room"},{"name",current_room}}.dump());
+        string room_reply = recv_message(datafd);
+        json q=json::parse(room_reply);
+        if(q.value("response", "failed") == "success" && q.contains("data")) {
+            cout << "[GameServer] User '" << me["name"] << "' retrieved current room: '" << current_room << "'" << endl;
+            send_message(fd,json{{"response","success"},{"data",json::array({q["data"]})}}.dump());
+        } else {
+            cerr << "[GameServer] Current room query failed: room '" << current_room << "' not found" << endl;
+            send_message(fd,json{{"response","failed"},{"reason","room not found"}}.dump());
+        }
+        return 1;
     }
-    else if(act=="curinvite"){
-        json s={{"action","search"},{"type","room"}};send_message(datafd,s.dump());
-        json res=json::parse(recv_message(datafd));json arr=json::array();
-        for(auto&r:res["data"])if(r["visibility"]=="private")
-            for(auto&x:r["inviteList"])if(x==uid)arr.push_back(r);
-        send_message(fd,json{{"response",arr.empty()?"failed":"success"},{"data",arr.empty()?"no invites":arr}}.dump());return 1;
+    else if (act == "curinvite") {
+        cerr << "[GameServer] User '" << me["name"] << "' querying current invites" << endl;
+        // 1. Ask Data Server for all rooms
+        json req = {
+            {"action", "search"},
+            {"type", "room"}
+        };
+        send_message(datafd, req.dump());
+
+        // 2. Receive reply
+        string reply = recv_message(datafd);
+        json res;
+        try {
+            res = json::parse(reply);
+        } catch (const exception &e) {
+            cerr << "[GameServer] Failed to parse data server response in curinvite: " << e.what() << endl;
+            send_message(fd, json{{"response", "failed"}, {"reason", "invalid JSON from data server"}}.dump());
+            return 0;
+        }
+
+        // 3. Collect rooms that contain this user's id in inviteList
+        json arr = json::array();
+
+        if (res.contains("data") && res["data"].is_array()) {
+            for (auto &r : res["data"]) {
+                if (!r.contains("inviteList") || !r["inviteList"].is_array())
+                    continue;
+
+                for (auto &x : r["inviteList"]) {
+                    if (x.is_number_integer() && x.get<int>() == uid) {
+                        arr.push_back(r);
+                        break;  // no need to check more invites for this room
+                    }
+                }
+            }
+        } else {
+            cerr << "[GameServer] Invalid room data from data server: " << res.dump() << endl;
+        }
+
+        // 4. Send back filtered result
+        json reply_to_client;
+        if (arr.empty()) {
+            cerr << "[GameServer] User '" << me["name"] << "' has no pending invites" << endl;
+            reply_to_client = {
+                {"response", "failed"},
+                {"reason", "no invites"}
+            };
+        } else {
+            cout << "[GameServer] User '" << me["name"] << "' has " << arr.size() << " pending invite(s)" << endl;
+            reply_to_client = {
+                {"response", "success"},
+                {"data", arr}
+            };
+        }
+
+        send_message(fd, reply_to_client.dump());
+        return 1;
     }
     else if(act=="invite"){
         string uname=j["user"],room=j["room"];
+        cerr << "[GameServer] User '" << me["name"] << "' attempting to invite '" << uname << "' to room '" << room << "'" << endl;
         send_message(datafd,json{{"action","query"},{"type","user"},{"name",uname}}.dump());
         json u=json::parse(recv_message(datafd));
-        if(u["response"]!="success"){send_message(fd,json{{"response","failed"},{"reason","no such user"}}.dump());return 0;}
+        if(u["response"]!="success"){
+            cerr << "[GameServer] Invite failed: user '" << uname << "' not found" << endl;
+            send_message(fd,json{{"response","failed"},{"reason","no such user"}}.dump());
+            return 0;
+        }
         int tid=u["data"]["id"];
         send_message(datafd,json{{"action","query"},{"type","room"},{"name",room}}.dump());
         json rr=json::parse(recv_message(datafd));json roomj=rr["data"];
-        if(roomj["hostUser"]!=me["name"]){send_message(fd,json{{"response","failed"},{"reason","not host"}}.dump());return 0;}
+        if(roomj["hostUser"]!=me["name"]){
+            cerr << "[GameServer] Invite failed: user '" << me["name"] << "' is not host of room '" << room << "'" << endl;
+            send_message(fd,json{{"response","failed"},{"reason","not host"}}.dump());
+            return 0;
+        }
         auto&inv=roomj["inviteList"];bool ex=false;for(auto&x:inv)if(x==tid)ex=true;
         if(!ex)inv.push_back(tid);
         send_message(datafd,json{{"action","update"},{"type","room"},{"data",roomj}}.dump());
+        recv_message(datafd);  // Consume update response
+        cout << "[GameServer] User '" << me["name"] << "' successfully invited '" << uname << "' (id=" << tid << ") to room '" << room << "'" << endl;
         send_message(fd,json{{"response","success"}}.dump());return 1;
     }
     send_message(fd,json{{"response","failed"},{"reason","unknown action"}}.dump());
@@ -413,9 +545,9 @@ int main() {
                     logineds.erase(fd);
                     continue;
                 }
-                cerr<<m<<endl;
+                // cerr<<m<<endl;
                 if(fd==datafd){
-                    cerr<<m<<endl;
+                    cerr<<"unexpected msg from data_server:"<<m<<endl;
                     continue;
                 }
                 client_request(fd,m);
