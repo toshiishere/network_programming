@@ -15,7 +15,7 @@ example:
 - `{"action":"delete","type":"room","data":"room name"}`
 
 respond with
-- create:`{"response":"success/failed","reason":"request, only if failed"}`
+- create:`{"response":"success/failed","reason":"request, only if failed","id":#}`
 - query:`{"response":"success/failed","data/reason":""}` //data include reason if failed
 - update:`{"response":"success/failed","reason":"only if failed"}`
 - search:`{"response":"success/failed","data/reason":[datas]}`

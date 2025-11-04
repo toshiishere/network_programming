@@ -12,13 +12,15 @@
 #include <unordered_map>
 #include "utility.h"
 #include "nlohmann/json.hpp"
+#include <cassert>
 
 using json=nlohmann::json; using namespace std;
 
 const int GAME_SERVER_PORT=45632, DATA_SERVER_PORT=45631;
-const char *IP="127.0.0.1"; const int MAX_EVENTS=10;
-int datafd; vector<int> clients;
-unordered_map<int,int> logineds; // fd -> user id
+const char *IP="127.0.0.1"; 
+const int MAX_EVENTS=10;
+int datafd; 
+unordered_map<int,int> logineds; // fd -> user id if not logined -> -1
 
 int make_socket_non_blocking(int s){int f=fcntl(s,F_GETFL,0);return fcntl(s,F_SETFL,f|O_NONBLOCK);}
 
@@ -30,14 +32,14 @@ int logining(int fd, const std::string &action, const std::string &name, const s
         {"name", name}
     };
     send_message(datafd, query.dump());
-    std::string reply = recv_message(datafd);
+    string reply = recv_message(datafd);
 
     if (reply.empty() || reply == "Disconnected") {
         cerr << "[GameServer] Data server unavailable or returned empty reply.\n";
         send_message(fd, json{{"response", "failed"}, {"reason", "data server unavailable"}}.dump());
         return 0;
     }
-
+    cerr<<"reply of logining "<<reply<<endl;
     json resp;
     try {
         resp = json::parse(reply);
@@ -122,19 +124,19 @@ int logining(int fd, const std::string &action, const std::string &name, const s
         } catch (...) {
             cerr << "[GameServer] Invalid JSON from data server during create.\n";
             send_message(fd, json{{"response", "failed"}, {"reason", "invalid JSON on create"}}.dump());
-            return 0;
+            return -1;
         }
 
         if (resp2.value("response", "failed") == "success") {
             send_message(fd, json{{"response", "success"}}.dump());
             cout << "[GameServer] Registered new user: " << name << endl;
-            return 1;
+            return resp2["id"];
         } else {
             send_message(fd, json{
                 {"response", "failed"},
                 {"reason", "data server create failed"}
             }.dump());
-            return 0;
+            return -1;
         }
     }
 
@@ -145,7 +147,7 @@ int logining(int fd, const std::string &action, const std::string &name, const s
             {"reason", "user does not exist"}
         }.dump());
         cerr << "[GameServer] Login failed: no such user '" << name << "'\n";
-        return 0;
+        return -1;
     }
 
     // --- fallback ---
@@ -154,14 +156,97 @@ int logining(int fd, const std::string &action, const std::string &name, const s
         {"reason", "unexpected error"}
     }.dump());
     cerr << "[GameServer] Unexpected condition in logining() for user '" << name << "'\n";
-    return 0;
+    return -1;
+}
+
+int logout_user(int fd) {
+    int uid = logineds[fd];
+    if (uid < 0) return -1;
+
+    // Step 1. Query the user
+    json query = {
+        {"action", "query"},
+        {"type", "user"},
+        {"id", uid}
+    };
+    send_message(datafd, query.dump());
+    string reply = recv_message(datafd);
+
+    if (reply.empty() || reply == "Disconnected") {
+        cerr << "[GameServer] Data server not responding during logout.\n";
+        return -1;
+    }
+
+    json resp;
+    try {
+        resp = json::parse(reply);
+    } catch (const std::exception &e) {
+        cerr << "[GameServer] JSON parse error from data server: " << e.what()
+             << "\nRaw: " << reply << endl;
+        return -1;
+    }
+
+    if (resp.value("response", "failed") != "success" || !resp.contains("data") || !resp["data"].is_object()) {
+        cerr << "[GameServer] logout_user(): user not found or invalid JSON\n";
+        return -1;
+    }
+
+    // Step 2. Update the user to offline
+    json user = resp["data"];
+    string uname = user.value("name", "(unknown)");
+    cout << "[GameServer] Logging out user: " << uname << " (id=" << uid << ")\n";
+
+    user["status"] = "offline";
+
+    json update = {
+        {"action", "update"},
+        {"type", "user"},
+        {"data", user}
+    };
+    send_message(datafd, update.dump());
+
+    // Step 3. Verify update succeeded
+    string reply2 = recv_message(datafd);
+    if (reply2.empty() || reply2 == "Disconnected") {
+        cerr << "[GameServer] Data server disconnected during logout.\n";
+        return -1;
+    }
+
+    json resp2;
+    try {
+        resp2 = json::parse(reply2);
+    } catch (...) {
+        cerr << "[GameServer] Invalid JSON from data server during logout update: " << reply2 << endl;
+        return -1;
+    }
+
+    if (resp2.value("response", "failed") == "success") {
+        cout << "[GameServer] User " << uname << " successfully logged out.\n";
+        return 1;
+    } else {
+        cerr << "[GameServer] Data server failed to update user during logout: "
+             << resp2.dump() << endl;
+        return -1;
+    }
 }
 
 
+
 int client_request(int fd,const string&msg){
-    json j; try{j=json::parse(msg);}catch(...){send_message(fd,json{{"response","failed"},{"reason","invalid JSON"}}.dump());return 0;}
-    if(!logineds.count(fd)){int uid=logining(fd,j["action"],j["name"],j["password"]);if(uid>=0)logineds[fd]=uid;return uid>=0;}
-    int uid=logineds[fd];string act=j["action"];
+    json j;
+    try{j=json::parse(msg);}
+    catch(...){
+        send_message(fd,json{{"response","failed"},{"reason","invalid JSON"}}.dump());
+        return 0;
+    }
+    if(logineds[fd]==-1){
+        int uid=logining(fd,j["action"],j["name"],j["password"]);
+        //cerr<<"does go to logining\n";
+        if(uid>=0)logineds[fd]=uid;
+        return uid;
+    }
+    int uid=logineds[fd];
+    string act=j["action"];
     // query self
     send_message(datafd,json{{"action","query"},{"type","user"},{"name",j["name"]}}.dump());
     json me=json::parse(recv_message(datafd))["data"];me["id"]=uid;
@@ -220,19 +305,95 @@ int client_request(int fd,const string&msg){
     return 0;
 }
 
-int main(){
-    int listen_sock=socket(AF_INET,SOCK_STREAM,0);
-    sockaddr_in addr{};addr.sin_family=AF_INET;inet_pton(AF_INET,IP,&addr.sin_addr);
-    addr.sin_port=htons(GAME_SERVER_PORT);bind(listen_sock,(sockaddr*)&addr,sizeof(addr));listen(listen_sock,SOMAXCONN);
+int main() {
+    // === Create game listening socket ===
+    int listen_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (listen_sock < 0) {
+        perror("[GameServer] socket() failed");
+        return 1;
+    }
 
-    datafd=socket(AF_INET,SOCK_STREAM,0);
-    sockaddr_in ds{};ds.sin_family=AF_INET;ds.sin_port=htons(DATA_SERVER_PORT);
-    inet_pton(AF_INET,IP,&ds.sin_addr);
-    connect(datafd,(sockaddr*)&ds,sizeof(ds));
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(GAME_SERVER_PORT);
+    if (inet_pton(AF_INET, IP, &addr.sin_addr) <= 0) {
+        cerr << "[GameServer] Invalid IP address: " << IP << endl;
+        close(listen_sock);
+        return 1;
+    }
 
-    int epfd=epoll_create1(0);make_socket_non_blocking(listen_sock);
-    epoll_event ev{.events=EPOLLIN,.data={.fd=listen_sock}};epoll_ctl(epfd,EPOLL_CTL_ADD,listen_sock,&ev);
-    epoll_event evs[MAX_EVENTS];cout<<"[Game] server ready\n";
+    int opt = 1;
+    setsockopt(listen_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    if (bind(listen_sock, (sockaddr *)&addr, sizeof(addr)) < 0) {
+        perror("[GameServer] bind() failed");
+        close(listen_sock);
+        return 1;
+    }
+
+    if (listen(listen_sock, SOMAXCONN) < 0) {
+        perror("[GameServer] listen() failed");
+        close(listen_sock);
+        return 1;
+    }
+
+    // === Connect to Data Server ===
+    datafd = socket(AF_INET, SOCK_STREAM, 0);
+    if (datafd < 0) {
+        perror("[GameServer] socket() for Data Server failed");
+        close(listen_sock);
+        return 1;
+    }
+
+    sockaddr_in ds{};
+    ds.sin_family = AF_INET;
+    ds.sin_port = htons(DATA_SERVER_PORT);
+    if (inet_pton(AF_INET, IP, &ds.sin_addr) <= 0) {
+        cerr << "[GameServer] Invalid Data Server IP: " << IP << endl;
+        close(listen_sock);
+        close(datafd);
+        return 1;
+    }
+
+    if (connect(datafd, (sockaddr *)&ds, sizeof(ds)) < 0) {
+        perror("[GameServer] connect() to Data Server failed");
+        close(listen_sock);
+        close(datafd);
+        return 1;
+    }
+
+    cout << "[GameServer] Connected to Data Server at " << IP << ":" << DATA_SERVER_PORT << endl;
+
+    // === Create epoll ===
+    int epfd = epoll_create1(0);
+    if (epfd < 0) {
+        perror("[GameServer] epoll_create1() failed");
+        close(listen_sock);
+        close(datafd);
+        return 1;
+    }
+
+    // === Make sockets non-blocking ===
+    if (make_socket_non_blocking(listen_sock) < 0) {
+        perror("[GameServer] make_socket_non_blocking() failed for listen_sock");
+        close(listen_sock);
+        close(datafd);
+        close(epfd);
+        return 1;
+    }
+
+    epoll_event ev{.events = EPOLLIN, .data = {.fd = listen_sock}};
+    if (epoll_ctl(epfd, EPOLL_CTL_ADD, listen_sock, &ev) < 0) {
+        perror("[GameServer] epoll_ctl(ADD listen_sock) failed");
+        close(listen_sock);
+        close(datafd);
+        close(epfd);
+        return 1;
+    }
+
+    cout << "[GameServer] Listening on " << IP << ":" << GAME_SERVER_PORT << " and ready!\n";
+
+    epoll_event evs[MAX_EVENTS];
     while(true){
         int n=epoll_wait(epfd,evs,MAX_EVENTS,-1);
         for(int i=0;i<n;++i){int fd=evs[i].data.fd;
@@ -240,10 +401,21 @@ int main(){
                 sockaddr_in c; socklen_t cl=sizeof(c); int cs=accept(listen_sock,(sockaddr*)&c,&cl);
                 make_socket_non_blocking(cs);
                 epoll_event ce{.events=EPOLLIN|EPOLLET,.data={.fd=cs}};epoll_ctl(epfd,EPOLL_CTL_ADD,cs,&ce);
-                clients.push_back(cs);
+                logineds.insert({cs,-1});
+                cerr<<"new client with fd="<<fd<<endl;
             }else{
                 string m=recv_message(fd);
-                if(m=="Disconnected"){close(fd);clients.erase(remove(clients.begin(),clients.end(),fd),clients.end());continue;}
+                if(m=="Disconnected"){
+                    close(fd);
+                    logout_user(fd);
+                    logineds.erase(fd);
+                    continue;
+                }
+                cerr<<m<<endl;
+                if(fd==datafd){
+                    cerr<<m<<endl;
+                    continue;
+                }
                 client_request(fd,m);
             }
         }

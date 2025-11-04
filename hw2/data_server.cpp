@@ -6,7 +6,7 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <netinet/in.h>
-#include<arpa/inet.h>
+#include <arpa/inet.h>
 #include <unistd.h>
 #include "utility.h"
 #include "nlohmann/json.hpp"
@@ -21,11 +21,14 @@ unordered_map<int, json> users;
 unordered_map<int, json> rooms;
 int user_cnt = 0;
 int room_cnt = 0;
+int sockfd;
 
 // --- Save and Load ---
 void saveUsers() {
     json data = json::array();
-    for (auto &[id, user] : users) data.push_back(user);
+    for (auto &[id, user] : users) {
+        data.push_back(user);
+    }
     ofstream out("data/users.json");
     if (!out.is_open()) {
         cerr << "[DataServer] Failed to open users.json for write\n";
@@ -43,13 +46,21 @@ unordered_map<int, json> loadUsers(const string &filename) {
         cerr << "[DataServer] No user file found, starting fresh.\n";
         return res;
     }
+
     json data;
     try {
         in >> data;
         for (auto &u : data) {
-            int id = u.at("id").get<int>();
-            u["status"] = "offline";
-            res[id] = u;
+            int id = u.value("id", user_cnt);
+            json user = {
+                {"id", id},
+                {"name", u.value("name", "")},
+                {"password", u.value("password", "")},
+                {"last_login", u.value("last_login", now_time_str())},
+                {"status", "offline"},
+                {"roomName", u.value("roomName", "-1")}
+            };
+            res[id] = user;
             user_cnt = max(user_cnt, id + 1);
         }
     } catch (...) {
@@ -59,15 +70,27 @@ unordered_map<int, json> loadUsers(const string &filename) {
 }
 
 // --- Core Operations ---
+json normalize_user(json data) {
+    return {
+        {"id", data.value("id", -1)},
+        {"name", data.value("name", "")},
+        {"password", data.value("password", "")},
+        {"last_login", data.value("last_login", now_time_str())},
+        {"status", data.value("status", "idle")},
+        {"roomName", data.value("roomName", "-1")}
+    };
+}
+
 int op_create(const string &type, json data) {
     if (type == "user") {
-        data["id"] = user_cnt++;
-        users[data["id"]] = data;
-        return 1;
+        json u = normalize_user(data);
+        u["id"] = user_cnt++;
+        users[u["id"]] = u;
+        return u["id"];
     } else if (type == "room") {
         data["id"] = room_cnt++;
         rooms[data["id"]] = data;
-        return 1;
+        return data["id"];
     } else if (type == "gamelog") {
         ofstream out("data/gamelog.json", ios::app);
         if (!out.is_open()) return -1;
@@ -77,22 +100,36 @@ int op_create(const string &type, json data) {
     return -1;
 }
 
-json op_query(const string &type, const string &name) {
+json op_query(const string &type, const json &request) {
     json res;
-    if (type == "user") {
-        for (auto &[id, user] : users) {
+    if (!(type == "user" || type=="room")) {
+        res["response"] = "failed";
+        res["reason"] = "unsupported type";
+        return res;
+    }
+
+    // query by name or id
+    string name = request.value("name", "");
+    int id = request.value("id", -1);
+    cerr<<"querying "<<type<<" with name="<<name<<" id="<<id<<endl;
+    if (id >= 0 && users.count(id)) {
+        res["response"] = "success";
+        res["data"] = users[id];
+        return res;
+    }
+
+    if (!name.empty()) {
+        for (auto &[uid, user] : users) {
             if (user.value("name", "") == name) {
                 res["response"] = "success";
                 res["data"] = user;
                 return res;
             }
         }
-        res["response"] = "failed";
-        res["reason"] = "no such user";
-    } else {
-        res["response"] = "failed";
-        res["reason"] = "unsupported type";
     }
+
+    res["response"] = "failed";
+    res["reason"] = "no such user";
     return res;
 }
 
@@ -100,12 +137,14 @@ json op_search(const string &type) {
     json arr = json::array(), res;
     if (type == "user") {
         for (auto &[id, user] : users)
-            if (user.value("status", "") == "idle") arr.push_back(user);
+            if (user.value("status", "") == "idle")
+                arr.push_back(user);
         res["response"] = arr.empty() ? "failed" : "success";
         res["data"] = arr.empty() ? json{"no user online"} : arr;
     } else if (type == "room") {
         for (auto &[id, room] : rooms)
-            if (room.value("visibility", "") == "public") arr.push_back(room);
+            if (room.value("visibility", "") == "public")
+                arr.push_back(room);
         res["response"] = arr.empty() ? "failed" : "success";
         res["data"] = arr.empty() ? json{"no available room"} : arr;
     } else {
@@ -116,17 +155,35 @@ json op_search(const string &type) {
 }
 
 int op_update(const string &type, json data) {
+    if (type != "user" && type != "room") return -1;
     if (!data.contains("id") || data["id"].is_null()) return -1;
-    int id = data["id"].get<int>();
+
+    int id;
+    try {
+        if (data["id"].is_string())
+            id = stoi(data["id"].get<string>());
+        else
+            id = data["id"].get<int>();
+    } catch (...) {
+        cerr << "[DataServer] Invalid id type in update\n";
+        return -1;
+    }
+
     if (type == "user" && users.count(id)) {
-        users[id] = data;
+        json merged = users[id];
+        for (auto &[k, v] : data.items()) merged[k] = v;
+        users[id] = normalize_user(merged);
+        cout << "[DataServer] Updated user id=" << id << " status=" << users[id]["status"] << endl;
         return 1;
     } else if (type == "room" && rooms.count(id)) {
         rooms[id] = data;
         return 1;
     }
+
+    cerr << "[DataServer] Update failed: " << type << " id=" << id << " not found\n";
     return -1;
 }
+
 
 int op_delete(const string &type, const string &name) {
     if (type == "room") {
@@ -144,6 +201,7 @@ int op_delete(const string &type, const string &name) {
 void signal_handler(int) {
     cout << "\n[DataServer] Caught SIGINT, saving users and exiting.\n";
     saveUsers();
+    close(sockfd);
     exit(0);
 }
 
@@ -173,7 +231,7 @@ int main() {
 
     sockaddr_in client{};
     socklen_t len = sizeof(client);
-    int sockfd = accept(listen_fd, (sockaddr *)&client, &len);
+    sockfd = accept(listen_fd, (sockaddr *)&client, &len);
     if (sockfd < 0) {
         perror("accept");
         return 1;
@@ -187,7 +245,7 @@ int main() {
             cout << "[DataServer] Game server disconnected.\n";
             break;
         }
-
+        cerr<<msg<<endl;
         json request;
         try {
             request = json::parse(msg);
@@ -204,28 +262,28 @@ int main() {
             if (action == "create") {
                 json data = request["data"].is_string() ? json::parse(request["data"].get<string>()) : request["data"];
                 int result = op_create(type, data);
-                response["response"] = result > 0 ? "success" : "failed";
-                if (result <= 0) response["reason"] = "create failed";
-            } 
+                response["response"] = result >= 0 ? "success" : "failed";
+                if (result >= 0) response["id"] = result;
+                if (result < 0) response["reason"] = "create failed";
+            }
             else if (action == "query") {
-                string name = request.value("name", "");
-                response = op_query(type, name);
-            } 
+                response = op_query(type, request);
+            }
             else if (action == "search") {
                 response = op_search(type);
-            } 
+            }
             else if (action == "update") {
                 json data = request["data"].is_string() ? json::parse(request["data"].get<string>()) : request["data"];
                 int result = op_update(type, data);
                 response["response"] = result > 0 ? "success" : "failed";
                 if (result <= 0) response["reason"] = "update failed";
-            } 
+            }
             else if (action == "delete") {
                 string name = request["data"].is_string() ? request["data"].get<string>() : "";
                 int result = op_delete(type, name);
                 response["response"] = result > 0 ? "success" : "failed";
                 if (result <= 0) response["reason"] = "delete failed";
-            } 
+            }
             else {
                 response["response"] = "failed";
                 response["reason"] = "unknown action";
