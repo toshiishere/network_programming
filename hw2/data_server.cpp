@@ -115,6 +115,7 @@ json op_query(const string &type, const json &request) {
     if (id >= 0 && users.count(id)) {
         res["response"] = "success";
         res["data"] = users[id];
+        cerr<<"response with id, data:"<<res.dump()<<endl;
         return res;
     }
 

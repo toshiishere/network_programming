@@ -37,7 +37,7 @@ int logining(int fd, const std::string &action, const std::string &name, const s
     if (reply.empty() || reply == "Disconnected") {
         cerr << "[GameServer] Data server unavailable or returned empty reply.\n";
         send_message(fd, json{{"response", "failed"}, {"reason", "data server unavailable"}}.dump());
-        return 0;
+        return -1;
     }
     cerr<<"reply of logining "<<reply<<endl;
     json resp;
@@ -46,7 +46,7 @@ int logining(int fd, const std::string &action, const std::string &name, const s
     } catch (const std::exception &e) {
         cerr << "[GameServer] JSON parse error from data server: " << e.what() << "\nRaw: " << reply << endl;
         send_message(fd, json{{"response", "failed"}, {"reason", "invalid JSON from data server"}}.dump());
-        return 0;
+        return -1;
     }
 
     std::string status = resp.value("response", "failed");
@@ -88,7 +88,7 @@ int logining(int fd, const std::string &action, const std::string &name, const s
                     {"response", "failed"},
                     {"reason", "wrong password or already online"}
                 }.dump());
-                return 0;
+                return -1;
             }
         } else {
             // trying to register but user already exists
@@ -96,7 +96,7 @@ int logining(int fd, const std::string &action, const std::string &name, const s
                 {"response", "failed"},
                 {"reason", "user already exists"}
             }.dump());
-            return 0;
+            return -1;
         }
     }
 
@@ -170,8 +170,9 @@ int logout_user(int fd) {
         {"id", uid}
     };
     send_message(datafd, query.dump());
+    recv_message(datafd);// BIG ISSUE,
     string reply = recv_message(datafd);
-
+    cerr<<reply<<endl;
     if (reply.empty() || reply == "Disconnected") {
         cerr << "[GameServer] Data server not responding during logout.\n";
         return -1;
@@ -187,6 +188,7 @@ int logout_user(int fd) {
     }
 
     if (resp.value("response", "failed") != "success" || !resp.contains("data") || !resp["data"].is_object()) {
+        cerr<<resp.dump();
         cerr << "[GameServer] logout_user(): user not found or invalid JSON\n";
         return -1;
     }
