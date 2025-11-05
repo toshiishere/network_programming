@@ -28,6 +28,7 @@ respond with
     - if`{create}`, add attribute of `{visibility}`
 - room:`{"action":invite/start}`
     - invite:`{"action":"invite","name":"john"}`
+- game:`{"action":"ready", "name":abc}` to make sure it is connected and for distinguishing
   
 
 - response of login:`{"response":"success"}` or `{"response":"failed","reason":"wrong passwd/dulplicate user"}`
@@ -44,4 +45,5 @@ respond with
 # json format
 - `User`：`{ id, name, password, last_login, status("idle"|"playing"|"offline"), roomName}`
 - `Room`：`{ id, name, hostUser, visibility("public"|"private"), inviteList[user Ids], status("idle"|"playing"|"room"), oppoUser}`
-- `GameLog`（對局摘要與結果）：`{ id, matchId, roomId, users:[userId], startAt, endAt, results:[{userId, score, lines, maxCombo}] }`
+- `GameLog`（對局摘要與結果）：`{ roomId, users:[userId], startAt, endAt, results:[{ score, lines, maxCombo}] }`
+- `gamestate`:`{"tick":#, "p1":"string_of_tetris_state", "p2":"string_of_tetirs_state"}`

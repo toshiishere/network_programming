@@ -37,6 +37,7 @@ public:
         bool holdLocked = false;
         std::array<Piece, 6> nextPreview{};
         int ghostY = 0;
+        int framesSinceLastDrop = 0;
     };
 
     explicit Tetris(uint32_t seed = std::random_device{}());
@@ -47,7 +48,7 @@ public:
     const State& state() const { return st_; }
 
     std::string debugString() const;
-
+    json result_json() const;
     // --- serialization ---
     json to_json() const;
     void from_json(const json& j);

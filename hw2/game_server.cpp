@@ -13,6 +13,8 @@
 #include "utility.h"
 #include "nlohmann/json.hpp"
 #include <cassert>
+#include <thread>
+#include "tetris.h"
 
 using json=nlohmann::json; using namespace std;
 
@@ -233,6 +235,226 @@ int logout_user(int fd) {
 }
 
 
+void handle_player_action(Tetris &game, const std::string &action) {
+    using A = Tetris::Action;
+    if (action == "Left") game.step(A::Left);
+    else if (action == "Right") game.step(A::Right);
+    else if (action == "SoftDrop") game.step(A::SoftDrop);
+    else if (action == "HardDrop") game.step(A::HardDrop);
+    else if (action == "RotateCW") game.step(A::RotateCW);
+    else if (action == "RotateCCW") game.step(A::RotateCCW);
+    else if (action == "Hold") game.step(A::Hold);
+}
+
+int savetodataserver(json &room, Tetris &game1, Tetris &game2){
+    json tosave={
+        {"action","create"},
+        {"type","gamelog"},
+        {"data",{
+            {"room",room},
+            {"host_result",game1.result_json()},
+            {"oppo_result",game2.result_json()}
+        }
+        }
+    };
+    send_message(datafd,tosave.dump());
+    recv_message(datafd);
+    return 0;
+}
+
+int start_game(json room){
+    string room_name = room.value("name", "");
+    string host_user = room.value("hostUser", "");
+    string oppo_user = room.value("oppoUser", "");
+    string start_time = now_time_str();
+    int room_id = room.value("id", 0);
+
+    cout << "[TetrisGameServer] Starting game for room '" << room_name << "' (id=" << room_id << ") - Players: " << host_user << " vs " << oppo_user << endl;
+
+    int port = room_id + 50000;
+    int listen_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (listen_sock < 0) {
+        perror("[TetrisGameServer] socket() failed");
+        return 1;
+    }
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    if (inet_pton(AF_INET, IP, &addr.sin_addr) <= 0) {
+        cerr << "[TetrisGameServer] Invalid IP address: " << IP << endl;
+        close(listen_sock);
+        return 1;
+    }
+
+    int opt = 1;
+    setsockopt(listen_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    if (bind(listen_sock, (sockaddr *)&addr, sizeof(addr)) < 0) {
+        perror("[TetrisGameServer] bind() failed");
+        close(listen_sock);
+        return 1;
+    }
+
+    if (listen(listen_sock, SOMAXCONN) < 0) {
+        perror("[TetrisGameServer] listen() failed");
+        close(listen_sock);
+        return 1;
+    }
+
+    cout << "[TetrisGameServer] Listening on port " << port << ", waiting for 2 players to connect..." << endl;
+
+    // Update room status to "playing"
+    room["status"] = "playing";
+    json update_room = {
+        {"action", "update"},
+        {"type", "room"},
+        {"data", room}
+    };
+    send_message(datafd, update_room.dump());
+    recv_message(datafd);  // Consume update response
+
+    // Accept connections from both players
+    socklen_t sl = sizeof(addr);
+    int p1_fd = accept(listen_sock, (sockaddr*)&addr, &sl);
+    if (p1_fd < 0) {
+        perror("[TetrisGameServer] accept() p1 failed");
+        close(listen_sock);
+        return 1;
+    }
+    cout << "[TetrisGameServer] Player 1 connected (fd=" << p1_fd << ")" << endl;
+
+    int p2_fd = accept(listen_sock, (sockaddr*)&addr, &sl);
+    if (p2_fd < 0) {
+        perror("[TetrisGameServer] accept() p2 failed");
+        close(p1_fd);
+        close(listen_sock);
+        return 1;
+    }
+    cout << "[TetrisGameServer] Player 2 connected (fd=" << p2_fd << ")" << endl;
+
+    // Make sockets non-blocking
+    make_socket_non_blocking(p1_fd);
+    make_socket_non_blocking(p2_fd);
+
+    // Create epoll instance
+    int epoll_fd = epoll_create1(0);
+    if (epoll_fd < 0) {
+        perror("[TetrisGameServer] epoll_create1() failed");
+        close(p1_fd);
+        close(p2_fd);
+        close(listen_sock);
+        return 1;
+    }
+
+    // Add both player sockets to epoll
+    epoll_event ev{};
+    ev.events = EPOLLIN | EPOLLET;
+    ev.data.fd = p1_fd;
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, p1_fd, &ev) < 0) {
+        perror("[TetrisGameServer] epoll_ctl p1 failed");
+        close(epoll_fd);
+        close(p1_fd);
+        close(p2_fd);
+        close(listen_sock);
+        return 1;
+    }
+
+    ev.data.fd = p2_fd;
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, p2_fd, &ev) < 0) {
+        perror("[TetrisGameServer] epoll_ctl p2 failed");
+        close(epoll_fd);
+        close(p1_fd);
+        close(p2_fd);
+        close(listen_sock);
+        return 1;
+    }
+
+    cout << "[TetrisGameServer] Game started! with p1=" << host_user<<", and p2="<<oppo_user << endl;
+
+
+    // Main game loop with epoll
+    epoll_event events[MAX_EVENTS];
+    bool game_running = true;
+    Tetris game1, game2;
+    
+    using namespace std::chrono;
+    auto next_tick = steady_clock::now();
+    const auto TICK_INTERVAL = 100ms; // 10 ticks per second
+    int frame = 0;
+
+    while (game_running) {
+        next_tick += TICK_INTERVAL;
+        frame++;
+
+        // --- 1️⃣ Handle player inputs ---
+        int n = epoll_wait(epoll_fd, events, MAX_EVENTS, 0);
+        for (int i = 0; i < n; i++) {
+            int client_fd = events[i].data.fd;
+            if (events[i].events & EPOLLIN) {
+                string msg = recv_message(client_fd);
+                if (msg.empty() || msg == "Disconnected") {
+                    cout << "[TetrisGameServer] Player disconnected (fd=" << client_fd << "). Ending game." << endl;
+                    game_running = false;
+                    break;
+                }
+                try {
+                    json game_msg = json::parse(msg);
+                    string action = game_msg.value("action", "");
+                    if (client_fd == p1_fd)
+                        handle_player_action(game1, action);
+                    else if (client_fd == p2_fd)
+                        handle_player_action(game2, action);
+                } catch (const exception &e) {
+                    cerr << "[TetrisGameServer] JSON parse error: " << e.what() << endl;
+                }
+            }
+        }
+
+        // --- 2️⃣ Advance both games ---
+        // Let the Tetris engine handle auto-dropping internally based on framesSinceLastDrop
+        game1.step(Tetris::Action::None);
+        game2.step(Tetris::Action::None);
+
+        // --- 3️⃣ Send frame snapshot to both players ---
+        json state = {
+            {"frame", frame},
+            {"p1", game1.to_json()},
+            {"p2", game2.to_json()}
+        };
+        string packet = state.dump();
+        send_message(p1_fd, packet);
+        send_message(p2_fd, packet);
+
+        // --- 4️⃣ End condition ---
+        if (game1.state().gameOver || game2.state().gameOver)
+            game_running = false;
+
+        // --- 5️⃣ Maintain steady tick rate ---
+        std::this_thread::sleep_until(next_tick);
+    }
+
+    // Cleanup
+    cout << "[TetrisGameServer] Cleaning up game for room '" << room_name << "'" << endl;
+    string endtime=now_time_str();
+    savetodataserver(room, game1, game2);
+
+    // Update room status back to "idle"
+    room["status"] = "idle";
+    json cleanup_room = {
+        {"action", "update"},
+        {"type", "room"},
+        {"data", room}
+    };
+    send_message(datafd, cleanup_room.dump());
+    recv_message(datafd);  // Consume update response
+
+    close(p1_fd);
+    close(p2_fd);
+    close(listen_sock);
+    close(epoll_fd);
+
+    return 0;
+}
 
 int client_request(int fd,const string&msg){
     json j;
@@ -501,7 +723,8 @@ int client_request(int fd,const string&msg){
                 }
                 // Send start message to the current user as well
                 send_message(fd, json{{"action","start"}}.dump());
-
+                thread t(start_game, room);
+                t.detach();
                 return 1;
             }
             else{
@@ -614,7 +837,9 @@ int main() {
         int n=epoll_wait(epfd,evs,MAX_EVENTS,-1);
         for(int i=0;i<n;++i){int fd=evs[i].data.fd;
             if(fd==listen_sock){
-                sockaddr_in c; socklen_t cl=sizeof(c); int cs=accept(listen_sock,(sockaddr*)&c,&cl);
+                sockaddr_in c;
+                socklen_t cl=sizeof(c);
+                int cs=accept(listen_sock,(sockaddr*)&c,&cl);
                 make_socket_non_blocking(cs);
                 epoll_event ce{.events=EPOLLIN|EPOLLET,.data={.fd=cs}};epoll_ctl(epfd,EPOLL_CTL_ADD,cs,&ce);
                 logineds.insert({cs,-1});

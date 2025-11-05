@@ -14,6 +14,14 @@ static constexpr uint8_t SHAPES[8][4][4] = {
 /* L */     {{0,0,0,0},{1,1,1,0},{0,0,1,0},{0,0,0,0}},
 };
 
+json Tetris::result_json() const {
+    return {
+        {"score", st_.score},
+        {"lines", st_.lines},
+        {"maxCombo", st_.combo}
+    };
+}
+
 static inline void rotXY(int &x, int &y, int rot) {
     int nx = x, ny = y;
     switch (rot & 3) {
@@ -151,10 +159,19 @@ bool Tetris::step(Action a){
     switch(a){
         case Action::Left:changed=move(-1,0);break;
         case Action::Right:changed=move(1,0);break;
-        case Action::SoftDrop:if(move(0,1)){++sdrop;changed=true;}break;
+        case Action::SoftDrop:
+            if(move(0,1)){
+                ++sdrop;
+                changed=true;
+                st_.framesSinceLastDrop=0; // Reset frame counter on soft drop
+            }
+            break;
         case Action::HardDrop:
             while(move(0,1))++hdrop;
-            lockPiece();changed=true;break;
+            lockPiece();
+            st_.framesSinceLastDrop=0; // Reset frame counter on hard drop
+            changed=true;
+            break;
         case Action::RotateCW:{Active t=st_.active;if(testKick(t,1)){st_.active=t;changed=true;}}break;
         case Action::RotateCCW:{Active t=st_.active;if(testKick(t,-1)){st_.active=t;changed=true;}}break;
         case Action::Hold:
@@ -162,16 +179,28 @@ bool Tetris::step(Action a){
                 Piece sw=st_.hold;st_.hold=st_.active.id;st_.holdLocked=true;
                 if(sw==Empty)spawn();
                 else{st_.active.id=sw;st_.active.rot=0;st_.active.x=3;st_.active.y=-1;if(!canPlace(st_.active))st_.gameOver=true;}
+                st_.framesSinceLastDrop=0; // Reset frame counter on hold
                 changed=true;
             }
             break;
         default:break;
     }
 
+    // Auto-drop logic: only drop if 10 frames have passed and not hard dropping
     if(a!=Action::HardDrop){
-        Active t=st_.active;t.y++;
-        if(canPlace(t)){st_.active=t;changed=true;}
-        else{lockPiece();changed=true;}
+        ++st_.framesSinceLastDrop;
+        if(st_.framesSinceLastDrop>=10){
+            Active t=st_.active;t.y++;
+            if(canPlace(t)){
+                st_.active=t;
+                changed=true;
+            }
+            else{
+                lockPiece();
+                changed=true;
+            }
+            st_.framesSinceLastDrop=0; // Reset after auto-drop
+        }
     }
 
     addLockScore(0,sdrop,hdrop);
@@ -227,7 +256,8 @@ json Tetris::to_json() const {
         {"lines", s.lines},
         {"level", s.level},
         {"combo", s.combo},
-        {"gameOver", s.gameOver}
+        {"gameOver", s.gameOver},
+        {"framesSinceLastDrop", s.framesSinceLastDrop}
     };
     return j;
 }
@@ -251,4 +281,5 @@ void Tetris::from_json(const json& j) {
     st_.level=j["level"];
     st_.combo=j["combo"];
     st_.gameOver=j["gameOver"];
+    st_.framesSinceLastDrop=j.value("framesSinceLastDrop", 0);
 }
