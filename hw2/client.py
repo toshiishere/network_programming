@@ -65,7 +65,7 @@ def login_or_register(sock, action: str, name: str, password: str):
         print("Raw reply:", reply)
 
 
-def room_op(sock, action: str, roomname:str=""):
+def lobby_op(sock, action: str, roomname:str=""):
     if(action in ('curinvite', 'curroom')):
         req = {
             "action": action
@@ -93,7 +93,7 @@ def room_op(sock, action: str, roomname:str=""):
             "roomname" : roomname
         }
         if action == 'create':
-            req["visibility"]='public' if input("visibility? y or n")=='y' else 'private'
+            req["visibility"]='public' if input("make it public? y or n ")=='y' else 'private'
         send_msg(sock, req)
         reply = recv_msg(sock)
         if not reply:
@@ -110,6 +110,53 @@ def room_op(sock, action: str, roomname:str=""):
         except Exception as e:
             print("⚠️  Failed to parse JSON:", e)
             print("Raw reply:", reply)
+
+def room_op(sock, action:str):
+    if(action == "invite"):
+        toinvite=input("Enter someone you want to invte: ").strip().lower()
+        req = {
+            "action": action,
+            "name": toinvite
+        }
+        send_msg(sock, req)
+        reply = recv_msg(sock)
+        if not reply:
+            print("⚠️  No reply or disconnected from server.")
+            return -1
+        try:
+            res = json.loads(reply)
+            if(res['response']=='success'):
+                print("invited "+toinvite)
+                return 0
+            else: 
+                print("← Server response:")
+                print(json.dumps(res, indent=2))
+        except Exception as e:
+            print("⚠️  Failed to parse JSON:", e)
+            print("Raw reply:", reply)
+    elif action == "start":
+        req = {
+            "action": action,
+        }
+        send_msg(sock, req)
+        reply = recv_msg(sock)
+        if not reply:
+            print("⚠️  No reply or disconnected from server.")
+            return -1
+        try:
+            res = json.loads(reply)
+            if(res['response']=='success'):
+                print("continue to start the game...")
+                return 1
+            else: 
+                print("← Server response:")
+                print(json.dumps(res, indent=2))
+        except Exception as e:
+            print("⚠️  Failed to parse JSON:", e)
+            print("Raw reply:", reply)
+
+
+
 
 # ========= Main =========
 def main():
@@ -147,11 +194,25 @@ def main():
             roomname=""
             if cmd in ("create", "join", "spec"):
                 roomname = input("Enter room name: ").strip()
-            if room_op(sock, cmd, roomname):
+            if lobby_op(sock, cmd, roomname):
                 state = 'room'
 
         elif state == 'room':
-            state = 'idle'
+            cmd = input("Enter 'invite' or 'start' (or 'quit'): ").strip().lower()
+            if cmd == 'quit':
+                break
+            if cmd not in ("invite", "start"):
+                print("Invalid command.\n")
+                continue
+            result=room_op(sock,cmd)
+            if result > 0:
+                state = 'gaming'
+            elif result == 0:
+                print("Nothing changed, still in the room")
+            else:
+                state = 'idle'
+                print("this shouldn't happen, bug happened")
+                print("exited the room")
 
         elif(state == 'gaming'):
             #connect to new socket

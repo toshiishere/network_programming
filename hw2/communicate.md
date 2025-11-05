@@ -24,8 +24,10 @@ respond with
 # client server communication
 
 - login:`{"action":"login/register","name":"name","password":"password"}`
-- lobby:`{"action":"create/curroom/curinvite/join/invite","roomname":"john"}`
+- lobby:`{"action":"create/curroom/curinvite/join","roomname":"john"}`
     - if`{create}`, add attribute of `{visibility}`
+- room:`{"action":invite/start}`
+    - invite:`{"action":"invite","name":"john"}`
   
 
 - response of login:`{"response":"success"}` or `{"response":"failed","reason":"wrong passwd/dulplicate user"}`
@@ -34,9 +36,12 @@ respond with
     - curroom:`{"response":"success/failed","data":[rooms]}`
     - curinvite:`{"response":"success/failed","data":[rooms]}`
     - join:`{"response":"success/failed","reason":"no such room"}`
+- response of room op:
     - invite:`{"response":"success/failed","reason":"no such user"}`
+    - start:`{"response":"success/failed"}`
+        - to tell client to start the game:`{"action":"start","data":room}`(room info include port, which is 50000+id), also tell the oppoUser
 
 # json format
 - `User`：`{ id, name, password, last_login, status("idle"|"playing"|"offline"), roomName}`
-- `Room`：`{ id, name, hostUser, visibility("public"|"private"), inviteList[user Ids], status("idle"|"playing")}`
+- `Room`：`{ id, name, hostUser, visibility("public"|"private"), inviteList[user Ids], status("idle"|"playing"|"room"), oppoUser}`
 - `GameLog`（對局摘要與結果）：`{ id, matchId, roomId, users:[userId], startAt, endAt, results:[{userId, score, lines, maxCombo}] }`

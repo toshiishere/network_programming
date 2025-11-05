@@ -249,7 +249,7 @@ int client_request(int fd,const string&msg){
     }
     int uid=logineds[fd];
     string act=j["action"];
-    // query self
+    // query user itself
     send_message(datafd,json{{"action","query"},{"type","user"},{"id",uid}}.dump());
     string self_reply = recv_message(datafd);
     json self_resp = json::parse(self_reply);
@@ -292,7 +292,7 @@ int client_request(int fd,const string&msg){
             return 0;
         }
         me["roomname"]=room;
-        me["status"]="playing";
+        me["status"]="room";
         send_message(datafd,json{{"action","update"},{"type","user"},{"data",me}}.dump());
         recv_message(datafd);  // Consume update response
         cout << "[GameServer] User '" << me["name"] << "' successfully created and joined room '" << room << "'" << endl;
@@ -316,7 +316,8 @@ int client_request(int fd,const string&msg){
             send_message(fd,json{{"response","failed"},{"reason","busy"}}.dump());
             return 0;
         }
-        me["roomname"]=room;me["status"]="playing";
+        me["roomname"]=room;
+        me["status"]="room";
         send_message(datafd,json{{"action","update"},{"type","user"},{"data",me}}.dump());
         recv_message(datafd);  // Consume update response
         cout << "[GameServer] User '" << me["name"] << "' successfully joined room '" << room << "'" << endl;
@@ -411,7 +412,7 @@ int client_request(int fd,const string&msg){
         return 1;
     }
     else if(act=="invite"){
-        string uname=j["user"],room=j["room"];
+        string uname=j["user"], room=j["room"];
         cerr << "[GameServer] User '" << me["name"] << "' attempting to invite '" << uname << "' to room '" << room << "'" << endl;
         send_message(datafd,json{{"action","query"},{"type","user"},{"name",uname}}.dump());
         json u=json::parse(recv_message(datafd));
@@ -428,12 +429,44 @@ int client_request(int fd,const string&msg){
             send_message(fd,json{{"response","failed"},{"reason","not host"}}.dump());
             return 0;
         }
-        auto&inv=roomj["inviteList"];bool ex=false;for(auto&x:inv)if(x==tid)ex=true;
+        auto&inv=roomj["inviteList"];
+        bool ex=false;
+        for(auto&x:inv)if(x==tid)ex=true;
         if(!ex)inv.push_back(tid);
         send_message(datafd,json{{"action","update"},{"type","room"},{"data",roomj}}.dump());
-        recv_message(datafd);  // Consume update response
+        recv_message(datafd);
         cout << "[GameServer] User '" << me["name"] << "' successfully invited '" << uname << "' (id=" << tid << ") to room '" << room << "'" << endl;
-        send_message(fd,json{{"response","success"}}.dump());return 1;
+        send_message(fd,json{{"response","success"}}.dump());
+        return 1;
+    }
+    else if(act=="start"){
+        //check if there are 2 player in the room
+        send_message(datafd,json{{"action","query"},{"type","room"},{"name",me["roomName"]}}.dump());
+        string query_reply = recv_message(datafd);
+        json query_res = json::parse(query_reply);
+        if(query_res.value("response", "failed") == "success") {
+            if(!query_res.contains("data")){
+                send_message(fd,json{{"response","failed"},{"reason","data_server side:"+query_res.value("reason", "no data of room")}}.dump());
+                return -1;
+            }
+            json room=query_res["data"];
+            if(room.value("oppoUser","").size() || (room.value("hostUser","").size())){//start the game
+                send_message(fd,json{{"response","success"}}.dump());
+
+                return 1;
+            }
+            else{
+                send_message(fd,json{{"response","failed"},{"reason","no 2 player in the room"}}.dump());
+                return -1;
+            }
+        } 
+        else {
+            cerr << "[GameServer] Query of room failed, fix it" << endl;
+            send_message(fd,json{{"response","failed"},{"reason",query_res.value("reason", "no room")}}.dump());
+        }
+    }
+    else if(act=="spectate"){
+        throw(runtime_error("not implemented yet"));
     }
     send_message(fd,json{{"response","failed"},{"reason","unknown action"}}.dump());
     return 0;
