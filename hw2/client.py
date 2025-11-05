@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-import socket, struct, json
+import socket, struct, json, select, sys
 
 # ========= Config =========
 SERVER_IP = "127.0.0.1"
@@ -145,15 +145,22 @@ def room_op(sock, action:str):
             return -1
         try:
             res = json.loads(reply)
-            if(res['response']=='success'):
+            if res.get('response') == 'success':
                 print("continue to start the game...")
+                # Don't return yet, wait for the "action":"start" message
+                return 0
+            elif res.get('action') == 'start':
+                print("\nReceived message:", json.dumps(res, indent=2))
+                print("Game is starting!")
                 return 1
-            else: 
+            else:
                 print("← Server response:")
                 print(json.dumps(res, indent=2))
+                return -1
         except Exception as e:
             print("⚠️  Failed to parse JSON:", e)
             print("Raw reply:", reply)
+            return -1
 
 
 
@@ -198,21 +205,46 @@ def main():
                 state = 'room'
 
         elif state == 'room':
-            cmd = input("Enter 'invite' or 'start' (or 'quit'): ").strip().lower()
-            if cmd == 'quit':
-                break
-            if cmd not in ("invite", "start"):
-                print("Invalid command.\n")
-                continue
-            result=room_op(sock,cmd)
-            if result > 0:
-                state = 'gaming'
-            elif result == 0:
-                print("Nothing changed, still in the room")
-            else:
-                state = 'idle'
-                print("this shouldn't happen, bug happened")
-                print("exited the room")
+            print("Enter 'invite' or 'start' (or 'quit'): ", end='', flush=True)
+            while state == 'room':
+                # Wait for either socket data or stdin input
+                readable, _, _ = select.select([sock, sys.stdin], [], [], 0.5)
+
+                # Check for incoming message from server
+                if sock in readable:
+                    msg = recv_msg(sock)
+                    if msg:
+                        try:
+                            res = json.loads(msg)
+                            print(f"\n\nReceived message: {json.dumps(res, indent=2)}")
+                            if res.get('action') == 'start':
+                                print("Game is starting!")
+                                state = 'gaming'
+                                break
+                        except Exception as e:
+                            print(f"⚠️  Failed to parse incoming message: {e}")
+                        print("\nEnter 'invite' or 'start' (or 'quit'): ", end='', flush=True)
+
+                # Check for user input
+                if sys.stdin in readable:
+                    cmd = sys.stdin.readline().strip().lower()
+                    if cmd == 'quit':
+                        state = 'idle'
+                        break
+                    if cmd not in ("invite", "start"):
+                        print("Invalid command.\n")
+                        print("Enter 'invite' or 'start' (or 'quit'): ", end='', flush=True)
+                        continue
+                    result = room_op(sock, cmd)
+                    if result > 0:
+                        state = 'gaming'
+                    elif result == 0:
+                        print("Nothing changed, still in the room")
+                        print("Enter 'invite' or 'start' (or 'quit'): ", end='', flush=True)
+                    else:
+                        state = 'idle'
+                        print("exited the room")
+                        break
 
         elif(state == 'gaming'):
             #connect to new socket

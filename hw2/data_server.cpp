@@ -81,6 +81,18 @@ json normalize_user(json data) {
     };
 }
 
+json normalize_room(json data) {
+    return {
+        {"id", data.value("id", -1)},
+        {"name", data.value("name", "")},
+        {"hostUser", data.value("hostUser", "")},
+        {"oppoUser", data.value("oppoUser", "")},
+        {"visibility", data.value("visibility", "public")},
+        {"inviteList", data.value("inviteList", json::array())},
+        {"status", data.value("status", "idle")}
+    };
+}
+
 int op_create(const string &type, json data) {
     if (type == "user") {
         json u = normalize_user(data);
@@ -88,12 +100,13 @@ int op_create(const string &type, json data) {
         users[u["id"]] = u;
         return u["id"];
     } else if (type == "room") {
-        data["id"] = room_cnt++;
-        rooms[data["id"]] = data;
-        cerr << "[DataServer] Created room: " << data.value("name", "(unnamed)")
-             << " (id=" << data["id"] << ", host=" << data.value("hostUser", "(unknown)")
-             << ", visibility=" << data.value("visibility", "public") << ")" << endl;
-        return data["id"];
+        json r = normalize_room(data);
+        r["id"] = room_cnt++;
+        rooms[r["id"]] = r;
+        cerr << "[DataServer] Created room: " << r.value("name", "(unnamed)")
+             << " (id=" << r["id"] << ", host=" << r.value("hostUser", "(unknown)")
+             << ", visibility=" << r.value("visibility", "public") << ")" << endl;
+        return r["id"];
     } else if (type == "gamelog") {
         ofstream out("data/gamelog.json", ios::app);
         if (!out.is_open()) return -1;
@@ -220,9 +233,11 @@ int op_update(const string &type, json data) {
         cout << "[DataServer] Updated user id=" << id << " status=" << users[id]["status"] << endl;
         return 1;
     } else if (type == "room" && rooms.count(id)) {
-        rooms[id] = data;
-        cerr << "[DataServer] Updated room id=" << id << " (" << data.value("name", "(unnamed)")
-             << ", status=" << data.value("status", "idle") << ")" << endl;
+        json merged = rooms[id];
+        for (auto &[k, v] : data.items()) merged[k] = v;
+        rooms[id] = normalize_room(merged);
+        cerr << "[DataServer] Updated room id=" << id << " (" << rooms[id].value("name", "(unnamed)")
+             << ", status=" << rooms[id].value("status", "idle") << ")" << endl;
         return 1;
     }
 

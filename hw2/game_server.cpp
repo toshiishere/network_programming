@@ -109,7 +109,7 @@ int logining(int fd, const std::string &action, const std::string &name, const s
             {"password", password},
             {"last_login", now_time_str()},
             {"status", "idle"},
-            {"roomname", "-1"}
+            {"roomName", "-1"}
         };
         json create = {
             {"action", "create"},
@@ -275,7 +275,7 @@ int client_request(int fd,const string&msg){
                     return 0;
                 }
         }
-        json newroom={{"name",room},{"hostUser",me["name"]},{"visibility",vis},{"inviteList",json::array()},{"status","idle"}};
+        json newroom={{"name",room},{"hostUser",me["name"]},{"oppoUser",""},{"visibility",vis},{"inviteList",json::array()},{"status","idle"}};
         send_message(datafd,json{{"action","create"},{"type","room"},{"data",newroom}}.dump());
         string create_reply = recv_message(datafd);
         json create_resp = json::parse(create_reply);
@@ -291,7 +291,7 @@ int client_request(int fd,const string&msg){
             send_message(fd,json{{"response","failed"},{"reason","room query failed"}}.dump());
             return 0;
         }
-        me["roomname"]=room;
+        me["roomName"]=room;
         me["status"]="room";
         send_message(datafd,json{{"action","update"},{"type","user"},{"data",me}}.dump());
         recv_message(datafd);  // Consume update response
@@ -316,7 +316,7 @@ int client_request(int fd,const string&msg){
             send_message(fd,json{{"response","failed"},{"reason","busy"}}.dump());
             return 0;
         }
-        me["roomname"]=room;
+        me["roomName"]=room;
         me["status"]="room";
         send_message(datafd,json{{"action","update"},{"type","user"},{"data",me}}.dump());
         recv_message(datafd);  // Consume update response
@@ -324,7 +324,7 @@ int client_request(int fd,const string&msg){
         send_message(fd,json{{"response","success"}}.dump());return 1;
     }
     else if(act=="curroom"){
-        string current_room = me.value("roomname", "-1");
+        string current_room = me.value("roomName", "-1");
         cerr << "[GameServer] User '" << me["name"] << "' querying current room" << endl;
         if(current_room == "-1"){
             // User not in a room - show all public rooms
@@ -412,18 +412,45 @@ int client_request(int fd,const string&msg){
         return 1;
     }
     else if(act=="invite"){
-        string uname=j["user"], room=j["room"];
+        // Get the user to invite (client sends "name" field)
+        string uname = j.value("name", j.value("user", ""));
+        if(uname.empty()) {
+            cerr << "[GameServer] Invite failed: no user specified" << endl;
+            send_message(fd,json{{"response","failed"},{"reason","no user specified"}}.dump());
+            return 0;
+        }
+
+        // Get current room from user's status
+        string room = me.value("roomName", "-1");
+        if(room == "-1") {
+            cerr << "[GameServer] Invite failed: user '" << me["name"] << "' is not in a room" << endl;
+            send_message(fd,json{{"response","failed"},{"reason","not in a room"}}.dump());
+            return 0;
+        }
+
         cerr << "[GameServer] User '" << me["name"] << "' attempting to invite '" << uname << "' to room '" << room << "'" << endl;
+
+        // Query the user to invite
         send_message(datafd,json{{"action","query"},{"type","user"},{"name",uname}}.dump());
         json u=json::parse(recv_message(datafd));
-        if(u["response"]!="success"){
+        if(u.value("response","failed") != "success" || !u.contains("data")){
             cerr << "[GameServer] Invite failed: user '" << uname << "' not found" << endl;
             send_message(fd,json{{"response","failed"},{"reason","no such user"}}.dump());
             return 0;
         }
         int tid=u["data"]["id"];
+
+        // Query the room
         send_message(datafd,json{{"action","query"},{"type","room"},{"name",room}}.dump());
-        json rr=json::parse(recv_message(datafd));json roomj=rr["data"];
+        string room_reply = recv_message(datafd);
+        json rr=json::parse(room_reply);
+        if(rr.value("response","failed") != "success" || !rr.contains("data")) {
+            cerr << "[GameServer] Invite failed: room '" << room << "' not found" << endl;
+            send_message(fd,json{{"response","failed"},{"reason","room not found"}}.dump());
+            return 0;
+        }
+
+        json roomj=rr["data"];
         if(roomj["hostUser"]!=me["name"]){
             cerr << "[GameServer] Invite failed: user '" << me["name"] << "' is not host of room '" << room << "'" << endl;
             send_message(fd,json{{"response","failed"},{"reason","not host"}}.dump());
@@ -452,6 +479,28 @@ int client_request(int fd,const string&msg){
             json room=query_res["data"];
             if(room.value("oppoUser","").size() || (room.value("hostUser","").size())){//start the game
                 send_message(fd,json{{"response","success"}}.dump());
+                
+
+                // Find and notify the opponent user
+                string oppo_name = (room["hostUser"] == me["name"]) ? room.value("oppoUser", "") : room.value("hostUser", "");
+                if (!oppo_name.empty()) {
+                    // Query opponent user to get their id
+                    send_message(datafd, json{{"action","query"},{"type","user"},{"name",oppo_name}}.dump());
+                    string oppo_reply = recv_message(datafd);
+                    json oppo_res = json::parse(oppo_reply);
+                    if (oppo_res.value("response", "failed") == "success" && oppo_res.contains("data")) {
+                        int oppo_id = oppo_res["data"].value("id", -1);
+                        // Find opponent's fd in logineds map
+                        for (auto& [oppo_fd, oppo_uid] : logineds) {
+                            if (oppo_uid == oppo_id) {
+                                send_message(oppo_fd, json{{"action","start"}}.dump());
+                                break;
+                            }
+                        }
+                    }
+                }
+                // Send start message to the current user as well
+                send_message(fd, json{{"action","start"}}.dump());
 
                 return 1;
             }
