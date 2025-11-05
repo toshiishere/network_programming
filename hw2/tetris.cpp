@@ -239,25 +239,61 @@ std::string Tetris::debugString() const {
 // --- JSON serialization ---
 json Tetris::to_json() const {
     json j;
-    std::vector<std::vector<int>> board2D(kHeight, std::vector<int>(kWidth));
+    // Create a composite board with ghost and active pieces included
+    std::array<uint8_t, kWidth * kHeight> compositeBoard;
+
+    // Copy the base board
     for (int y=0; y<kHeight; ++y)
         for (int x=0; x<kWidth; ++x)
-            board2D[y][x] = board_[idx(x,y)];
+            compositeBoard[idx(x,y)] = board_[idx(x,y)];
 
     const auto& s = st_;
+
+    // Draw ghost piece into board (value = 8 for ghost)
+    if (s.active.id > 0) {
+        for (int py=0; py<4; ++py) {
+            for (int px=0; px<4; ++px) {
+                if (!cell(s.active.id, s.active.rot, px, py)) continue;
+                int bx = s.active.x + px;
+                int by = s.ghostY + py;
+                // Only draw ghost if it's not where the active piece is
+                if (by >= 0 && by < kHeight && bx >= 0 && bx < kWidth &&
+                    compositeBoard[idx(bx,by)] == 0 && by != s.active.y + py) {
+                    compositeBoard[idx(bx,by)] = 8; // 8 = ghost piece marker
+                }
+            }
+        }
+    }
+
+    // Draw active piece into board (value = 9 for active)
+    if (s.active.id > 0) {
+        for (int py=0; py<4; ++py) {
+            for (int px=0; px<4; ++px) {
+                if (!cell(s.active.id, s.active.rot, px, py)) continue;
+                int bx = s.active.x + px;
+                int by = s.active.y + py;
+                if (by >= 0 && by < kHeight && bx >= 0 && bx < kWidth) {
+                    compositeBoard[idx(bx,by)] = 9; // 9 = active piece marker
+                }
+            }
+        }
+    }
+
+    // Convert board to simple array
+    std::vector<int> boardArray;
+    boardArray.reserve(kWidth * kHeight);
+    for (size_t i = 0; i < compositeBoard.size(); i++) {
+        boardArray.push_back(static_cast<int>(compositeBoard[i]));
+    }
+
+    // Compact JSON with plain array
     j = {
-        {"board", board2D},
-        {"active", {{"id", s.active.id}, {"x", s.active.x}, {"y", s.active.y}, {"rot", s.active.rot}}},
-        {"ghostY", s.ghostY},
-        {"hold", s.hold},
-        {"holdLocked", s.holdLocked},
-        {"next", s.nextPreview},
-        {"score", s.score},
-        {"lines", s.lines},
-        {"level", s.level},
-        {"combo", s.combo},
-        {"gameOver", s.gameOver},
-        {"framesSinceLastDrop", s.framesSinceLastDrop}
+        {"b", boardArray}, // board as plain array
+        {"h", s.hold},     // hold
+        {"s", s.score},    // score
+        {"l", s.lines},    // lines
+        {"v", s.level},    // level
+        {"g", s.gameOver}  // gameOver
     };
     return j;
 }

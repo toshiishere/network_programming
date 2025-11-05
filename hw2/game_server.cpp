@@ -247,11 +247,16 @@ void handle_player_action(Tetris &game, const std::string &action) {
 }
 
 int savetodataserver(json &room, Tetris &game1, Tetris &game2){
+    string host_user = room.value("hostUser", "");
+    string oppo_user = room.value("oppoUser", "");
+
     json tosave={
         {"action","create"},
         {"type","gamelog"},
         {"data",{
             {"room",room},
+            {"hostUser",host_user},
+            {"oppoUser",oppo_user},
             {"host_result",game1.result_json()},
             {"oppo_result",game2.result_json()}
         }
@@ -416,14 +421,19 @@ int start_game(json room){
         game2.step(Tetris::Action::None);
 
         // --- 3️⃣ Send frame snapshot to both players ---
-        json state = {
-            {"frame", frame},
-            {"p1", game1.to_json()},
-            {"p2", game2.to_json()}
+        // Each player sees their own game as p1 and opponent as p2
+        json state_p1 = {
+            {"f", frame},      // frame
+            {"p1", game1.to_json()},  // player 1's own game
+            {"p2", game2.to_json()}   // player 2's game (opponent)
         };
-        string packet = state.dump();
-        send_message(p1_fd, packet);
-        send_message(p2_fd, packet);
+        json state_p2 = {
+            {"f", frame},      // frame
+            {"p1", game2.to_json()},  // player 2's own game
+            {"p2", game1.to_json()}   // player 1's game (opponent)
+        };
+        send_message(p1_fd, state_p1.dump());
+        send_message(p2_fd, state_p2.dump());
 
         // --- 4️⃣ End condition ---
         if (game1.state().gameOver || game2.state().gameOver)
@@ -438,15 +448,14 @@ int start_game(json room){
     string endtime=now_time_str();
     savetodataserver(room, game1, game2);
 
-    // Update room status back to "idle"
-    room["status"] = "idle";
+    // Delete the room after game over
     json cleanup_room = {
-        {"action", "update"},
+        {"action", "delete"},
         {"type", "room"},
-        {"data", room}
+        {"id", room["id"]}
     };
     send_message(datafd, cleanup_room.dump());
-    recv_message(datafd);  // Consume update response
+    recv_message(datafd);  // Consume delete response
 
     close(p1_fd);
     close(p2_fd);
@@ -538,6 +547,13 @@ int client_request(int fd,const string&msg){
             send_message(fd,json{{"response","failed"},{"reason","busy"}}.dump());
             return 0;
         }
+
+        // Update room to set oppoUser
+        target["oppoUser"] = me["name"];
+        send_message(datafd,json{{"action","update"},{"type","room"},{"data",target}}.dump());
+        recv_message(datafd);  // Consume update response
+
+        // Update user status
         me["roomName"]=room;
         me["status"]="room";
         send_message(datafd,json{{"action","update"},{"type","user"},{"data",me}}.dump());
@@ -715,14 +731,14 @@ int client_request(int fd,const string&msg){
                         // Find opponent's fd in logineds map
                         for (auto& [oppo_fd, oppo_uid] : logineds) {
                             if (oppo_uid == oppo_id) {
-                                send_message(oppo_fd, json{{"action","start"}}.dump());
+                                send_message(oppo_fd, json{{"action","start"},{"data",room}}.dump());
                                 break;
                             }
                         }
                     }
                 }
                 // Send start message to the current user as well
-                send_message(fd, json{{"action","start"}}.dump());
+                send_message(fd, json{{"action","start"},{"data",room}}.dump());
                 thread t(start_game, room);
                 t.detach();
                 return 1;
