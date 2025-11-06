@@ -40,7 +40,7 @@ public:
         int framesSinceLastDrop = 0;
     };
 
-    explicit Tetris(uint32_t seed = std::random_device{}());
+    explicit Tetris(uint32_t seed = std::random_device{}(), int dropInterval = 10);
     void reset();
     bool step(Action a);
 
@@ -51,13 +51,13 @@ public:
     json result_json() const;
     // --- serialization ---
     json to_json() const;
-    void from_json(const json& j);
 
 private:
     std::array<uint8_t, kWidth * kHeight> board_{};
     std::mt19937 rng_;
     std::vector<Piece> bag_;
     State st_{};
+    int dropInterval_; // Frames between auto-drops (lower = harder)
 
     void spawn();
     bool canPlace(const Active& a) const;

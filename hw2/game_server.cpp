@@ -380,7 +380,11 @@ int start_game(json room, json pA, json pB){
     // Main game loop with epoll
     epoll_event events[MAX_EVENTS];
     bool game_running = true;
-    Tetris game1, game2;
+
+    // Initialize games with seed (use room_id for deterministic seeding, or add custom seed)
+    uint32_t seed = room.value("seed", static_cast<uint32_t>(room_id));
+    int difficulty = room.value("difficulty", 10); // Default: 10 frames = easy, lower = harder
+    Tetris game1(seed, difficulty), game2(seed, difficulty);
     
     using namespace std::chrono;
     auto next_tick = steady_clock::now();
@@ -396,22 +400,29 @@ int start_game(json room, json pA, json pB){
         for (int i = 0; i < n; i++) {
             int client_fd = events[i].data.fd;
             if (events[i].events & EPOLLIN) {
-                string msg = recv_message(client_fd);
-                if (msg.empty() || msg == "Disconnected") {
-                    cout << "[TetrisGameServer] Player disconnected (fd=" << client_fd << "). Ending game." << endl;
-                    game_running = false;
-                    break;
+                // Drain all available messages from the socket
+                while (true) {
+                    string msg = recv_message(client_fd);
+                    if (msg.empty()) {
+                        break;
+                    }
+                    if (msg == "Disconnected") {
+                        cout << "[TetrisGameServer] Player disconnected (fd=" << client_fd << "). Ending game." << endl;
+                        game_running = false;
+                        break;
+                    }
+                    try {
+                        json game_msg = json::parse(msg);
+                        string action = game_msg.value("action", "");
+                        if (client_fd == p1_fd)
+                            handle_player_action(game1, action);
+                        else if (client_fd == p2_fd)
+                            handle_player_action(game2, action);
+                    } catch (const exception &e) {
+                        cerr << "[TetrisGameServer] JSON parse error: " << e.what() << endl;
+                    }
                 }
-                try {
-                    json game_msg = json::parse(msg);
-                    string action = game_msg.value("action", "");
-                    if (client_fd == p1_fd)
-                        handle_player_action(game1, action);
-                    else if (client_fd == p2_fd)
-                        handle_player_action(game2, action);
-                } catch (const exception &e) {
-                    cerr << "[TetrisGameServer] JSON parse error: " << e.what() << endl;
-                }
+                if (!game_running) break;
             }
         }
 
@@ -445,6 +456,31 @@ int start_game(json room, json pA, json pB){
 
     // Cleanup
     cout << "[TetrisGameServer] Cleaning up game for room '" << room_name << "'" << endl;
+
+    // Send final game over notification to both players
+    // Each player sees their own result as "my_result" and opponent as "opponent_result"
+    bool p1_won = game2.state().gameOver; // p1 wins if p2's game is over
+
+    json game_over_p1 = {
+        {"action", "game_over"},
+        {"won", p1_won},
+        {"my_result", game1.result_json()},
+        {"opponent_result", game2.result_json()}
+    };
+
+    json game_over_p2 = {
+        {"action", "game_over"},
+        {"won", !p1_won},
+        {"my_result", game2.result_json()},
+        {"opponent_result", game1.result_json()}
+    };
+
+    send_message(p1_fd, game_over_p1.dump());
+    send_message(p2_fd, game_over_p2.dump());
+
+    // Give clients time to process the message before closing
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
     string endtime=now_time_str();
     savetodataserver(room, game1, game2);
 
@@ -515,7 +551,8 @@ int client_request(int fd,const string&msg){
     if(act=="create"){ // room
         string room=j["roomname"];
         string vis=j.value("visibility","public");
-        cerr << "[GameServer] User '" << me["name"] << "' attempting to create room '" << room << "' (visibility=" << vis << ")" << endl;
+        int difficulty=j.value("difficulty",10);
+        cerr << "[GameServer] User '" << me["name"] << "' attempting to create room '" << room << "' (visibility=" << vis << ", difficulty=" << difficulty << ")" << endl;
         json check={{"action","search"},{"type","room"}};
         send_message(datafd,check.dump());
         json r=json::parse(recv_message(datafd));
@@ -527,7 +564,7 @@ int client_request(int fd,const string&msg){
                     return 0;
                 }
         }
-        json newroom={{"name",room},{"hostUser",me["name"]},{"oppoUser",""},{"visibility",vis},{"inviteList",json::array()},{"status","idle"}};
+        json newroom={{"name",room},{"hostUser",me["name"]},{"oppoUser",""},{"visibility",vis},{"inviteList",json::array()},{"status","idle"},{"difficulty",difficulty}};
         send_message(datafd,json{{"action","create"},{"type","room"},{"data",newroom}}.dump());
         string create_reply = recv_message(datafd);
         json create_resp = json::parse(create_reply);
@@ -752,39 +789,43 @@ int client_request(int fd,const string&msg){
                 return -1;
             }
             json room=query_res["data"];
-            if(room.value("oppoUser","").size() || (room.value("hostUser","").size())){//start the game
-                send_message(fd,json{{"response","success"}}.dump());
-                
+            string host_user = room.value("hostUser", "");
+            string oppo_user = room.value("oppoUser", "");
 
-                // Find and notify the opponent user
-                string oppo_name = (room["hostUser"] == me["name"]) ? room.value("oppoUser", "") : room.value("hostUser", "");
-                json oppo_res;
-                if (!oppo_name.empty()) {
-                    // Query opponent user to get their id
-                    send_message(datafd, json{{"action","query"},{"type","user"},{"name",oppo_name}}.dump());
-                    string oppo_reply = recv_message(datafd);
-                    oppo_res = json::parse(oppo_reply);
-                    if (oppo_res.value("response", "failed") == "success" && oppo_res.contains("data")) {
-                        int oppo_id = oppo_res["data"].value("id", -1);
-                        // Find opponent's fd in logineds map
-                        for (auto& [oppo_fd, oppo_uid] : logineds) {
-                            if (oppo_uid == oppo_id) {
-                                send_message(oppo_fd, json{{"action","start"},{"data",room}}.dump());
-                                break;
-                            }
+            // Validate that both host and opponent exist
+            if(host_user.empty() || oppo_user.empty()){
+                string missing = host_user.empty() ? "host" : "opponent";
+                send_message(fd,json{{"response","failed"},{"reason","need both host and opponent to start (missing " + missing + ")"}}.dump());
+                return 0; // Return 0 to keep player in room state
+            }
+
+            // Both players exist, start the game
+            send_message(fd,json{{"response","success"}}.dump());
+
+            // Find and notify the opponent user
+            string oppo_name = (room["hostUser"] == me["name"]) ? room.value("oppoUser", "") : room.value("hostUser", "");
+            json oppo_res;
+            if (!oppo_name.empty()) {
+                // Query opponent user to get their id
+                send_message(datafd, json{{"action","query"},{"type","user"},{"name",oppo_name}}.dump());
+                string oppo_reply = recv_message(datafd);
+                oppo_res = json::parse(oppo_reply);
+                if (oppo_res.value("response", "failed") == "success" && oppo_res.contains("data")) {
+                    int oppo_id = oppo_res["data"].value("id", -1);
+                    // Find opponent's fd in logineds map
+                    for (auto& [oppo_fd, oppo_uid] : logineds) {
+                        if (oppo_uid == oppo_id) {
+                            send_message(oppo_fd, json{{"action","start"},{"data",room}}.dump());
+                            break;
                         }
                     }
                 }
-                // Send start message to the current user as well
-                send_message(fd, json{{"action","start"},{"data",room}}.dump());
-                thread t(start_game, room, me, oppo_res["data"]);
-                t.detach();
-                return 1;
             }
-            else{
-                send_message(fd,json{{"response","failed"},{"reason","no 2 player in the room"}}.dump());
-                return -1;
-            }
+            // Send start message to the current user as well
+            send_message(fd, json{{"action","start"},{"data",room}}.dump());
+            thread t(start_game, room, me, oppo_res["data"]);
+            t.detach();
+            return 1;
         } 
         else {
             cerr << "[GameServer] Query of room failed, fix it" << endl;

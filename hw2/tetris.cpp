@@ -41,7 +41,7 @@ bool Tetris::cell(Piece p, int rot, int dx, int dy) {
     return SHAPES[p][y][x] != 0;
 }
 
-Tetris::Tetris(uint32_t seed) : rng_(seed) { reset(); }
+Tetris::Tetris(uint32_t seed, int dropInterval) : rng_(seed), dropInterval_(dropInterval) { reset(); }
 
 void Tetris::reset() {
     board_.fill(0);
@@ -178,7 +178,11 @@ bool Tetris::step(Action a){
             if(!st_.holdLocked){
                 Piece sw=st_.hold;st_.hold=st_.active.id;st_.holdLocked=true;
                 if(sw==Empty)spawn();
-                else{st_.active.id=sw;st_.active.rot=0;st_.active.x=3;st_.active.y=-1;if(!canPlace(st_.active))st_.gameOver=true;}
+                else{
+                    st_.active.id=sw;st_.active.rot=0;st_.active.x=3;st_.active.y=-1;
+                    if(!canPlace(st_.active)){st_.active.y=0;}
+                    if(!canPlace(st_.active))st_.gameOver=true;
+                }
                 st_.framesSinceLastDrop=0; // Reset frame counter on hold
                 changed=true;
             }
@@ -186,10 +190,10 @@ bool Tetris::step(Action a){
         default:break;
     }
 
-    // Auto-drop logic: only drop if 10 frames have passed and not hard dropping
+    // Auto-drop logic: only drop if dropInterval_ frames have passed and not hard dropping
     if(a!=Action::HardDrop){
         ++st_.framesSinceLastDrop;
-        if(st_.framesSinceLastDrop>=10){
+        if(st_.framesSinceLastDrop>=dropInterval_){
             Active t=st_.active;t.y++;
             if(canPlace(t)){
                 st_.active=t;
@@ -296,26 +300,4 @@ json Tetris::to_json() const {
         {"g", s.gameOver}  // gameOver
     };
     return j;
-}
-
-void Tetris::from_json(const json& j) {
-    auto b2D = j.at("board").get<std::vector<std::vector<int>>>();
-    for (int y=0; y<kHeight; ++y)
-        for (int x=0; x<kWidth; ++x)
-            board_[idx(x,y)] = static_cast<uint8_t>(b2D[y][x]);
-    auto a=j.at("active");
-    st_.active.id=a["id"];
-    st_.active.x=a["x"];
-    st_.active.y=a["y"];
-    st_.active.rot=a["rot"];
-    st_.ghostY=j["ghostY"];
-    st_.hold=j["hold"];
-    st_.holdLocked=j["holdLocked"];
-    st_.nextPreview=j["next"].get<std::array<Piece,6>>();
-    st_.score=j["score"];
-    st_.lines=j["lines"];
-    st_.level=j["level"];
-    st_.combo=j["combo"];
-    st_.gameOver=j["gameOver"];
-    st_.framesSinceLastDrop=j.value("framesSinceLastDrop", 0);
 }

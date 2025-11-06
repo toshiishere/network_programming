@@ -9,9 +9,7 @@
 
 bool send_message(int sock, const std::string &msg) {
     unsigned len = msg.size();
-    uint32_t net_len = htonl(len);  // convert to network byte order
-
-    // Send the 4-byte length header
+    uint32_t net_len = htonl(len);
     size_t header_sent = 0;
     while (header_sent < sizeof(net_len)) {
         ssize_t n = write(sock, ((char*)&net_len) + header_sent, sizeof(net_len) - header_sent);

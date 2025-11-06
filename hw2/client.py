@@ -95,6 +95,20 @@ def lobby_op(sock, action: str, roomname:str=""):
         }
         if action == 'create':
             req["visibility"]='public' if input("make it public? y or n ")=='y' else 'private'
+            while True:
+                try:
+                    difficulty_input = input("Choose difficulty (hardest 2~10 easiest, default=10): ").strip()
+                    if difficulty_input == "":
+                        req["difficulty"] = 10
+                        break
+                    difficulty = int(difficulty_input)
+                    if 2 <= difficulty <= 10:
+                        req["difficulty"] = difficulty
+                        break
+                    else:
+                        print("⚠️  Difficulty must be between 2 and 10. Try again.")
+                except ValueError:
+                    print("⚠️  Please enter a valid number.")
         send_msg(sock, req)
         reply = recv_msg(sock)
         if not reply:
@@ -155,9 +169,10 @@ def room_op(sock, action:str):
                 print("Game is starting!")
                 return 1
             else:
+                # Failed to start (e.g., missing opponent) - stay in room
                 print("← Server response:")
                 print(json.dumps(res, indent=2))
-                return -1
+                return 0  # Return 0 to stay in room, not -1
         except Exception as e:
             print("⚠️  Failed to parse JSON:", e)
             print("Raw reply:", reply)
@@ -472,8 +487,32 @@ def play_game(lobby_sock, room_id, player_name,):
                 msg = recv_msg(game_sock)
                 if msg:
                     data = json.loads(msg)
+
+                    # Check for game_over notification
+                    if data.get('action') == 'game_over':
+                        won = data.get('won', False)
+                        my_result = data.get('my_result', {})
+                        opponent_result = data.get('opponent_result', {})
+
+                        print("\n" + "="*50)
+                        print("GAME OVER!")
+                        print("="*50)
+                        if won:
+                            print("You WON!")
+                        else:
+                            print("You LOST!")
+                        print(f"\nYour Stats:")
+                        print(f"  Score: {my_result.get('score', 0)}")
+                        print(f"  Lines: {my_result.get('lines', 0)}")
+                        print(f"  Max Combo: {my_result.get('maxCombo', 0)}")
+                        print(f"\nOpponent Stats:")
+                        print(f"  Score: {opponent_result.get('score', 0)}")
+                        print(f"  Lines: {opponent_result.get('lines', 0)}")
+                        print(f"  Max Combo: {opponent_result.get('maxCombo', 0)}")
+                        print("="*50)
+                        running = False
                     # Server sends: {"frame": N, "p1": {...}, "p2": {...}}
-                    if 'p1' in data and 'p2' in data:
+                    elif 'p1' in data and 'p2' in data:
                         my_state = data['p1']
                         opponent_state = data['p2']
                         # Check if game is over (support both 'g' and 'gameOver')
@@ -483,8 +522,12 @@ def play_game(lobby_sock, room_id, player_name,):
                             print("Game Over! You won!")
                 else:
                     # Connection closed
-                    print("Server disconnected")
+                    print("Connection closed by server")
                     running = False
+        except ConnectionResetError:
+            # Server closed connection - game ended
+            print("Game ended - connection closed by server")
+            running = False
         except Exception as e:
             print(f"Error receiving game state: {e}")
             running = False

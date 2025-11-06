@@ -82,6 +82,11 @@ json normalize_user(json data) {
 }
 
 json normalize_room(json data) {
+    // Validate and clamp difficulty to range [2, 10]
+    int difficulty = data.value("difficulty", 10);
+    if (difficulty < 2) difficulty = 2;
+    if (difficulty > 10) difficulty = 10;
+
     return {
         {"id", data.value("id", -1)},
         {"name", data.value("name", "")},
@@ -89,7 +94,8 @@ json normalize_room(json data) {
         {"oppoUser", data.value("oppoUser", "")},
         {"visibility", data.value("visibility", "public")},
         {"inviteList", data.value("inviteList", json::array())},
-        {"status", data.value("status", "idle")}
+        {"status", data.value("status", "idle")},
+        {"difficulty", difficulty}
     };
 }
 
