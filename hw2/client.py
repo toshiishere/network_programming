@@ -1,7 +1,6 @@
 #!/usr/bin/python3
 import socket, struct, json, select, sys
 import pygame
-import threading
 
 # ========= Config =========
 SERVER_IP = "127.0.0.1"
@@ -603,7 +602,7 @@ def main():
                             except Exception as e:
                                 print(f"⚠️  Failed to parse start message: {e}")
                     elif result == 0:
-                        print("Nothing changed, still in the room")
+                        print("Still in the room")
                         print("Enter 'invite' or 'start' (or 'quit'): ", end='', flush=True)
                     else:
                         state = 'idle'

@@ -1,0 +1,4 @@
+#python:
+pygame>=2.5.0
+#cpp:
+#nolhman's json, is included

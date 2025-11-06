@@ -1,18 +1,18 @@
 [
     {
         "id": 1,
-        "last_login": "2025-11-06 02:19:56",
+        "last_login": "2025-11-06 14:23:15",
         "name": "a",
         "password": "a",
-        "roomName": "john",
-        "status": "offline"
+        "roomName": "-1",
+        "status": "idle"
     },
     {
         "id": 0,
-        "last_login": "2025-11-06 02:19:47",
+        "last_login": "2025-11-06 14:23:05",
         "name": "abc",
         "password": "abc",
-        "roomName": "john",
-        "status": "offline"
+        "roomName": "-1",
+        "status": "idle"
     }
 ]

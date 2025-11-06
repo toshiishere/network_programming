@@ -58,7 +58,7 @@ unordered_map<int, json> loadUsers(const string &filename) {
                 {"password", u.value("password", "")},
                 {"last_login", u.value("last_login", now_time_str())},
                 {"status", "offline"},
-                {"roomName", u.value("roomName", "-1")}
+                {"roomName", "-1"}
             };
             res[id] = user;
             user_cnt = max(user_cnt, id + 1);
@@ -193,13 +193,11 @@ json op_search(const string &type) {
             res["data"] = arr;
         }
     } else if (type == "room") {
-        for (auto &[id, room] : rooms)
-            if (room.value("visibility", "") == "public")
-                arr.push_back(room);
+        for (auto &[id, room] : rooms) arr.push_back(room);
         res["response"] = arr.empty() ? "failed" : "success";
         if (arr.empty()) {
             res["reason"] = "no available room";
-            cerr << "[DataServer] Search rooms: no public rooms available" << endl;
+            cerr << "[DataServer] Search rooms: no rooms available, either public or private" << endl;
         } else {
             res["data"] = arr;
             cerr << "[DataServer] Search rooms: found " << arr.size() << " public room(s)" << endl;
