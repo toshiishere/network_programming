@@ -109,6 +109,7 @@ void Tetris::lockPiece(){
     }
     clearLinesAndScore();
     spawn();
+    st_.holdLocked = false; // allow hold on the newly spawned piece
 }
 
 int Tetris::clearLinesAndScore(){

@@ -15,7 +15,7 @@ using json = nlohmann::json;
 using namespace std;
 
 const int DATA_SERVER_PORT = 45631;
-const char *IP = "127.0.0.1";
+const char *IP = "127.0.0.1";//140.113.17.11
 
 unordered_map<int, json> users;
 unordered_map<int, json> rooms;
@@ -94,6 +94,7 @@ json normalize_room(json data) {
         {"oppoUser", data.value("oppoUser", "")},
         {"visibility", data.value("visibility", "public")},
         {"inviteList", data.value("inviteList", json::array())},
+        {"specList", data.value("specList", json::array())},
         {"status", data.value("status", "idle")},
         {"difficulty", difficulty}
     };
@@ -349,7 +350,7 @@ int main() {
                 string name = request["data"].is_string() ? request["data"].get<string>() : "";
                 int result = op_delete(type, name);
                 response["response"] = result > 0 ? "success" : "failed";
-                if (result <= 0) response["reason"] = "delete failed";
+                if (result <= 0) response["reason"] = request.dump();
             }
             else {
                 response["response"] = "failed";

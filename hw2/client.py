@@ -3,6 +3,7 @@ import socket, struct, json, select, sys
 import pygame
 
 # ========= Config =========
+#140.113.17.11
 SERVER_IP = "127.0.0.1"
 SERVER_PORT = 45632
 
@@ -75,22 +76,26 @@ def lobby_op(sock, action: str, roomname:str=""):
         reply = recv_msg(sock)
         if not reply:
             print("⚠️  No reply or disconnected from server.")
-            return False
+            return False, None
         try:
             res = json.loads(reply)
             if(res['response']=='success'):
                 for room in res['data']:
                     print(json.dumps(room, indent=2))
-                return False #success, but noting changed
+                return False, None  # success, but nothing changed
             else: 
                 print("← Server response:")
                 print(json.dumps(res, indent=2))
         except Exception as e:
             print("⚠️  Failed to parse JSON:", e)
             print("Raw reply:", reply)
+        return False, None
     elif action in ('create', 'join', 'spec'):
+        # Map 'spec' to 'spectate' for server
+        server_action = "spectate" if action == "spec" else action
+
         req = {
-            "action": action,
+            "action": server_action,
             "roomname" : roomname
         }
         if action == 'create':
@@ -113,18 +118,38 @@ def lobby_op(sock, action: str, roomname:str=""):
         reply = recv_msg(sock)
         if not reply:
             print("⚠️  No reply or disconnected from server.")
-            return False
+            return False, None
         try:
             res = json.loads(reply)
             if(res['response']=='success'):
-                print('success, now join THE room')
-                return True #success, move to room
-            else: 
+                if action == 'spec':
+                    print('✅ Successfully joined as spectator')
+                    # Expect an immediate follow-up message that contains room info
+                    next_msg = recv_msg(sock)
+                    if not next_msg:
+                        print("⚠️  Did not receive room info for spectating.")
+                        return False, None
+                    try:
+                        spec_payload = json.loads(next_msg)
+                    except Exception as e:
+                        print("⚠️  Failed to parse spectate payload:", e)
+                        print("Raw reply:", next_msg)
+                        return False, None
+                    if spec_payload.get('action') != 'spectate':
+                        print("⚠️  Unexpected follow-up message:", json.dumps(spec_payload, indent=2))
+                        return False, None
+                    return True, spec_payload.get('data', {})
+                else:
+                    print('✅ Success, now join THE room')
+                return True, None  # success, move to room
+            else:
                 print("← Server response:")
                 print(json.dumps(res, indent=2))
         except Exception as e:
             print("⚠️  Failed to parse JSON:", e)
             print("Raw reply:", reply)
+        return False, None
+    return False, None
 
 def room_op(sock, action:str):
     if(action == "invite"):
@@ -421,6 +446,55 @@ def draw_tetris_game(screen, my_state, opponent_state, player_name):
 
     pygame.display.flip()
 
+def draw_spectator_view(screen, player_states, frame_no, spectator_name):
+    """Render both players side-by-side for spectator mode."""
+    screen.fill((15, 15, 25))
+
+    font = pygame.font.Font(None, 38)
+    sub_font = pygame.font.Font(None, 26)
+    small_font = pygame.font.Font(None, 22)
+
+    title = font.render(f"Spectating as {spectator_name}", True, (255, 255, 255))
+    screen.blit(title, (20, 10))
+
+    frame_text = sub_font.render(f"Frame: {frame_no}", True, (200, 200, 200))
+    screen.blit(frame_text, (20, 55))
+
+    if not player_states:
+        waiting = font.render("Waiting for live match data...", True, (255, 255, 255))
+        rect = waiting.get_rect(center=(screen.get_width() // 2, screen.get_height() // 2))
+        screen.blit(waiting, rect)
+        pygame.display.flip()
+        return
+
+    cell_size = 22
+    board_width = 10 * cell_size
+    spacing = 80
+    total_width = len(player_states) * board_width + (len(player_states) - 1) * spacing
+    start_x = max(40, (screen.get_width() - total_width) // 2)
+    board_top = 110
+
+    for idx, (name, state) in enumerate(player_states):
+        col_x = start_x + idx * (board_width + spacing)
+        draw_mini_board(screen, state, col_x, board_top, cell_size, name)
+
+        score = state.get('s', state.get('score', 0))
+        lines = state.get('l', state.get('lines', 0))
+        combo = state.get('c', state.get('combo', state.get('maxCombo', 0)))
+        status_text = [
+            f"Score: {score}",
+            f"Lines: {lines}",
+            f"Combo: {combo}",
+        ]
+        stats_y = board_top + 20 * cell_size + 10
+        for i, text in enumerate(status_text):
+            text_surface = sub_font.render(text, True, (210, 210, 210))
+            screen.blit(text_surface, (col_x, stats_y + i * 24))
+
+    hint = small_font.render("ESC to leave spectate mode", True, (190, 190, 190))
+    screen.blit(hint, (20, screen.get_height() - 40))
+    pygame.display.flip()
+
 
 def play_game(lobby_sock, room_id, player_name,):
     """Connect to game server and play with pygame GUI."""
@@ -438,7 +512,8 @@ def play_game(lobby_sock, room_id, player_name,):
         print(f"Connecting to game server on port {game_port}...")
         game_sock.connect((SERVER_IP, game_port))
         print(f"✅ Connected to game on port {game_port}!")
-        # Keep socket in blocking mode; we'll use select() to check for data
+        # Identify ourselves to the game server
+        send_msg(game_sock, {"action": "ready", "name": player_name})
     except Exception as e:
         print(f"❌ Failed to connect to game server: {e}")
         pygame.quit()
@@ -511,15 +586,34 @@ def play_game(lobby_sock, room_id, player_name,):
                         print(f"  Max Combo: {opponent_result.get('maxCombo', 0)}")
                         print("="*50)
                         running = False
-                    # Server sends: {"frame": N, "p1": {...}, "p2": {...}}
-                    elif 'p1' in data and 'p2' in data:
-                        my_state = data['p1']
-                        opponent_state = data['p2']
-                        # Check if game is over (support both 'g' and 'gameOver')
-                        if my_state.get('g', my_state.get('gameOver', False)):
-                            print("Game Over! You lost.")
-                        elif opponent_state.get('g', opponent_state.get('gameOver', False)):
-                            print("Game Over! You won!")
+                    # Server sends: {"f": frame, "username1": {...}, "username2": {...}}
+                    elif 'f' in data:
+                        # Extract usernames from data (all keys except 'f')
+                        player_keys = [k for k in data.keys() if k != 'f']
+
+                        if len(player_keys) >= 2:
+                            # Identify which one is current player by removing "(SPECTATOR)" suffix
+                            actual_player_name = player_name.replace(" (SPECTATOR)", "")
+
+                            # Find my state and opponent state
+                            if player_keys[0] == actual_player_name:
+                                my_state = data[player_keys[0]]
+                                opponent_state = data[player_keys[1]]
+                            elif player_keys[1] == actual_player_name:
+                                my_state = data[player_keys[1]]
+                                opponent_state = data[player_keys[0]]
+                            else:
+                                # Spectator mode - use first player as main view
+                                my_state = data[player_keys[0]]
+                                opponent_state = data[player_keys[1]]
+
+                            # Check if game is over (support both 'g' and 'gameOver')
+                            if my_state.get('g', my_state.get('gameOver', False)):
+                                if actual_player_name in player_keys:
+                                    print("Game Over! You lost.")
+                            elif opponent_state.get('g', opponent_state.get('gameOver', False)):
+                                if actual_player_name in player_keys:
+                                    print("Game Over! You won!")
                 else:
                     # Connection closed
                     print("Connection closed by server")
@@ -552,13 +646,74 @@ def play_game(lobby_sock, room_id, player_name,):
     print("Game ended.")
 
 
+def spectate_game(room_id, spectator_name):
+    """Connect to an active room as spectator and render both boards."""
+    pygame.init()
+    screen = pygame.display.set_mode((740, 720))
+    pygame.display.set_caption(f"Tetris Spectator - {spectator_name}")
+    clock = pygame.time.Clock()
+
+    game_port = room_id + 50000
+    game_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+    try:
+        print(f"Connecting to game server on port {game_port} as spectator...")
+        game_sock.connect((SERVER_IP, game_port))
+        print(f"✅ Connected to spectate room on port {game_port}!")
+        send_msg(game_sock, {"action": "spectate", "name": spectator_name})
+    except Exception as e:
+        print(f"❌ Failed to connect for spectating: {e}")
+        pygame.quit()
+        return
+
+    running = True
+    frame_no = 0
+    player_states = []
+
+    while running:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                running = False
+
+        try:
+            readable, _, _ = select.select([game_sock], [], [], 0)
+            if readable:
+                msg = recv_msg(game_sock)
+                if not msg:
+                    print("Spectate connection closed by server.")
+                    running = False
+                    break
+                data = json.loads(msg)
+                if data.get('action') == 'game_over':
+                    print("Spectated match finished.")
+                    running = False
+                elif 'f' in data:
+                    frame_no = data.get('f', frame_no)
+                    player_states = [(key, data[key]) for key in data if key != 'f']
+        except ConnectionResetError:
+            print("Spectate connection reset by server.")
+            running = False
+        except Exception as e:
+            print(f"Error receiving spectate data: {e}")
+            running = False
+
+        draw_spectator_view(screen, player_states, frame_no, spectator_name)
+        clock.tick(30)
+
+    game_sock.close()
+    pygame.quit()
+    print("Spectate session ended.")
+
 
 
 # ========= Main =========
 def main():
-    state = 'login' #login, idle, gaming, room
+    state = 'login' #login, idle, gaming, room, spectating
     username = ""
     current_room_name = ""
+    room_info = None
 
     print(f"Connecting to {SERVER_IP}:{SERVER_PORT} ...")
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -594,13 +749,22 @@ def main():
             roomname=""
             if cmd in ("create", "join", "spec"):
                 roomname = input("Enter room name: ").strip()
-            if lobby_op(sock, cmd, roomname):
-                current_room_name = roomname
-                state = 'room'
+            success, payload = lobby_op(sock, cmd, roomname)
+            if success:
+                if cmd == 'spec':
+                    if payload and 'id' in payload:
+                        room_info = payload
+                        state = 'spectating'
+                    else:
+                        print("⚠️  Missing room data for spectating.")
+                else:
+                    current_room_name = roomname
+                    room_info = None
+                    state = 'room'
 
         elif state == 'room':
-            print("Enter 'invite' or 'start' (or 'quit'): ", end='', flush=True)
             room_info = None
+            print("Enter 'invite' or 'start' (or 'quit'): ", end='', flush=True)
             while state == 'room':
                 # Wait for either socket data or stdin input
                 readable, _, _ = select.select([sock, sys.stdin], [], [], 0.5)
@@ -616,6 +780,11 @@ def main():
                                 print("Game is starting! Launching GUI...")
                                 room_info = res.get('data', {})
                                 state = 'gaming'
+                                break
+                            elif res.get('action') == 'spectate':
+                                print("Joining game as spectator! Launching GUI...")
+                                room_info = res.get('data', {})
+                                state = 'spectating'
                                 break
                         except Exception as e:
                             print(f"⚠️  Failed to parse incoming message: {e}")
@@ -652,18 +821,27 @@ def main():
                         print("exited the room")
                         break
 
-        elif(state == 'gaming'):
-            # Use room info from the start message
+        elif state == 'gaming':
             if room_info and 'id' in room_info:
                 room_id = room_info.get('id', 0)
                 print(f"Room ID: {room_id}, connecting to game server...")
-
-                # Launch pygame GUI
                 play_game(sock, room_id, username)
             else:
-                print("Error: No room information received")
+                print("Error: No room information received for game start.")
 
-            # After game ends, go back to idle
+            state = 'idle'
+            current_room_name = ""
+            room_info = None
+            print("\nReturned to lobby.")
+
+        elif state == 'spectating':
+            if room_info and 'id' in room_info:
+                room_id = room_info.get('id', 0)
+                print(f"Room ID: {room_id}, connecting as spectator...")
+                spectate_game(room_id, username)
+            else:
+                print("Error: No room information received for spectating.")
+
             state = 'idle'
             current_room_name = ""
             room_info = None
