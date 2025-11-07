@@ -3,8 +3,8 @@ import socket, struct, json, select, sys
 import pygame
 
 # ========= Config =========
-#140.113.17.11
-SERVER_IP = "127.0.0.1"
+SERVER_IP ="140.113.17.11"
+# SERVER_IP = "127.0.0.1"
 SERVER_PORT = 45632
 
 
