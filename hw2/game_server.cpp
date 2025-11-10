@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <arpa/inet.h>
 #include <string.h>
+#include <errno.h>
 #include <string>
 #include <set>
 #include <unordered_map>
@@ -19,7 +20,7 @@
 using json=nlohmann::json; using namespace std;
 
 const int GAME_SERVER_PORT=45632, DATA_SERVER_PORT=45631;
-const char *IP="127.0.0.1"; 
+const char *IP="127.0.0.1"; //140.113.17.11
 const int MAX_EVENTS=10;
 int datafd; 
 unordered_map<int,int> logineds; // fd -> user id if not logined -> -1
@@ -318,28 +319,73 @@ int start_game(json room, json pA, json pB){
     send_message(datafd, update_room.dump());
     recv_message(datafd);  // Consume update response
 
-    // Accept connections from both players
+    // Accept connections and identify host/opponent (spectators may attempt to connect early)
     socklen_t sl = sizeof(addr);
-    int p1_fd = accept(listen_sock, (sockaddr*)&addr, &sl);
-    if (p1_fd < 0) {
-        perror("[TetrisGameServer] accept() p1 failed");
-        close(listen_sock);
-        return 1;
-    }
-    cout << "[TetrisGameServer] Player 1 connected (fd=" << p1_fd << ")" << endl;
+    int host_fd = -1, oppo_fd = -1;
+    std::vector<int> pending_spectators;
 
-    int p2_fd = accept(listen_sock, (sockaddr*)&addr, &sl);
-    if (p2_fd < 0) {
-        perror("[TetrisGameServer] accept() p2 failed");
-        close(p1_fd);
-        close(listen_sock);
-        return 1;
+    auto handle_handshake = [&](int fd) {
+        string hello = recv_message(fd);
+        if (hello.empty() || hello == "Disconnected") {
+            cerr << "[TetrisGameServer] Empty handshake from fd=" << fd << ", closing.\n";
+            close(fd);
+            return;
+        }
+        json payload;
+        try {
+            payload = json::parse(hello);
+        } catch (const std::exception &e) {
+            cerr << "[TetrisGameServer] Invalid handshake JSON from fd=" << fd << ": " << e.what() << endl;
+            close(fd);
+            return;
+        }
+
+        string action = payload.value("action", "");
+        string name = payload.value("name", "");
+        if (action == "ready") {
+            if (name == host_user && host_fd < 0) {
+                host_fd = fd;
+                cout << "[TetrisGameServer] Host player '" << name << "' ready (fd=" << fd << ")\n";
+            } else if (name == oppo_user && oppo_fd < 0) {
+                oppo_fd = fd;
+                cout << "[TetrisGameServer] Opponent player '" << name << "' ready (fd=" << fd << ")\n";
+            } else {
+                cerr << "[TetrisGameServer] Unexpected player handshake from '" << name
+                     << "' (fd=" << fd << "). Closing connection.\n";
+                send_message(fd, json{{"action","error"},{"reason","not part of this match"}}.dump());
+                close(fd);
+            }
+        } else if (action == "spectate") {
+            cout << "[TetrisGameServer] Spectator '" << name << "' pre-connected (fd=" << fd << ")\n";
+            pending_spectators.push_back(fd);
+        } else {
+            cerr << "[TetrisGameServer] Unknown handshake action '" << action
+                 << "' from fd=" << fd << ", closing.\n";
+            send_message(fd, json{{"action","error"},{"reason","invalid handshake"}}.dump());
+            close(fd);
+        }
+    };
+
+    while (host_fd < 0 || oppo_fd < 0) {
+        int new_fd = accept(listen_sock, (sockaddr*)&addr, &sl);
+        if (new_fd < 0) {
+            if (errno == EINTR) continue;
+            perror("[TetrisGameServer] accept() during handshake failed");
+            continue;
+        }
+        handle_handshake(new_fd);
     }
-    cout << "[TetrisGameServer] Player 2 connected (fd=" << p2_fd << ")" << endl;
+
+    int p1_fd = host_fd;
+    int p2_fd = oppo_fd;
+    cout << "[TetrisGameServer] Both players connected: host fd=" << p1_fd << ", opponent fd=" << p2_fd << endl;
 
     // Make sockets non-blocking
     make_socket_non_blocking(p1_fd);
     make_socket_non_blocking(p2_fd);
+
+    // Make listen socket non-blocking to accept spectators during game
+    make_socket_non_blocking(listen_sock);
 
     // Create epoll instance
     int epoll_fd = epoll_create1(0);
@@ -374,6 +420,25 @@ int start_game(json room, json pA, json pB){
         return 1;
     }
 
+    // Add listen socket to epoll to accept spectators during game
+    ev.data.fd = listen_sock;
+    ev.events = EPOLLIN | EPOLLET;
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, listen_sock, &ev) < 0) {
+        perror("[TetrisGameServer] epoll_ctl listen_sock failed");
+        close(epoll_fd);
+        close(p1_fd);
+        close(p2_fd);
+        close(listen_sock);
+        return 1;
+    }
+
+    // Track spectators, include any who connected before the match fully started
+    std::vector<int> spectator_fds;
+    for (int spec_fd : pending_spectators) {
+        make_socket_non_blocking(spec_fd);
+        spectator_fds.push_back(spec_fd);
+    }
+
     cout << "[TetrisGameServer] Game started! with p1=" << host_user<<", and p2="<<oppo_user << endl;
 
 
@@ -395,34 +460,66 @@ int start_game(json room, json pA, json pB){
         next_tick += TICK_INTERVAL;
         frame++;
 
-        // --- 1️⃣ Handle player inputs ---
+        // --- 1️⃣ Handle player inputs and spectator connections ---
         int n = epoll_wait(epoll_fd, events, MAX_EVENTS, 0);
         for (int i = 0; i < n; i++) {
             int client_fd = events[i].data.fd;
             if (events[i].events & EPOLLIN) {
-                // Drain all available messages from the socket
-                while (true) {
-                    string msg = recv_message(client_fd);
-                    if (msg.empty()) {
-                        break;
+                // Check if it's the listen socket (new spectator connecting)
+                if (client_fd == listen_sock) {
+                    while (true) {
+                        sockaddr_in spec_addr{};
+                        socklen_t spec_len = sizeof(spec_addr);
+                        int spec_fd = accept(listen_sock, (sockaddr*)&spec_addr, &spec_len);
+                        if (spec_fd < 0) {
+                            if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                                perror("[TetrisGameServer] accept() spectator failed");
+                            }
+                            break;
+                        }
+
+                        // Add spectator to tracking
+                        make_socket_non_blocking(spec_fd);
+                        spectator_fds.push_back(spec_fd);
+                        cout << "[TetrisGameServer] Spectator connected (fd=" << spec_fd << "), total spectators: " << spectator_fds.size() << endl;
                     }
-                    if (msg == "Disconnected") {
-                        cout << "[TetrisGameServer] Player disconnected (fd=" << client_fd << "). Ending game." << endl;
-                        game_running = false;
-                        break;
+                } else {
+                    // Handle player input or spectator/player disconnections
+                    while (true) {
+                        string msg = recv_message(client_fd);
+                        if (msg.empty()) {
+                            break;
+                        }
+                        if (msg == "Disconnected") {
+                            // Check if it's a player or spectator
+                            if (client_fd == p1_fd || client_fd == p2_fd) {
+                                cout << "[TetrisGameServer] Player disconnected (fd=" << client_fd << "). Ending game." << endl;
+                                game_running = false;
+                            } else {
+                                // Remove spectator
+                                auto it = std::find(spectator_fds.begin(), spectator_fds.end(), client_fd);
+                                if (it != spectator_fds.end()) {
+                                    spectator_fds.erase(it);
+                                    cout << "[TetrisGameServer] Spectator disconnected (fd=" << client_fd << "), remaining: " << spectator_fds.size() << endl;
+                                }
+                            }
+                            break;
+                        }
+                        try {
+                            json game_msg = json::parse(msg);
+                            string action = game_msg.value("action", "");
+                            // Only process actions from actual players
+                            if (client_fd == p1_fd)
+                                handle_player_action(game1, action);
+                            else if (client_fd == p2_fd)
+                                handle_player_action(game2, action);
+                            // Spectators' actions are ignored
+                        } catch (const exception &e) {
+                            cerr << "[TetrisGameServer] JSON parse error: " << e.what() << endl;
+                        }
                     }
-                    try {
-                        json game_msg = json::parse(msg);
-                        string action = game_msg.value("action", "");
-                        if (client_fd == p1_fd)
-                            handle_player_action(game1, action);
-                        else if (client_fd == p2_fd)
-                            handle_player_action(game2, action);
-                    } catch (const exception &e) {
-                        cerr << "[TetrisGameServer] JSON parse error: " << e.what() << endl;
-                    }
+                    if (!game_running) break;
                 }
-                if (!game_running) break;
             }
         }
 
@@ -431,20 +528,32 @@ int start_game(json room, json pA, json pB){
         game1.step(Tetris::Action::None);
         game2.step(Tetris::Action::None);
 
-        // --- 3️⃣ Send frame snapshot to both players ---
-        // Each player sees their own game as p1 and opponent as p2
-        json state_p1 = {
-            {"f", frame},      // frame
-            {"p1", game1.to_json()},  // player 1's own game
-            {"p2", game2.to_json()}   // player 2's game (opponent)
+        // --- 3️⃣ Send frame snapshot to players and spectators ---
+        // Send game states with usernames as keys
+        json state = {
+            {"f", frame},
+            {host_user, game1.to_json()},
+            {oppo_user, game2.to_json()}
         };
-        json state_p2 = {
-            {"f", frame},      // frame
-            {"p1", game2.to_json()},  // player 2's own game
-            {"p2", game1.to_json()}   // player 1's game (opponent)
-        };
-        send_message(p1_fd, state_p1.dump());
-        send_message(p2_fd, state_p2.dump());
+        string state_str = state.dump();
+
+        // Send to players
+        send_message(p1_fd, state_str);
+        send_message(p2_fd, state_str);
+
+        // Send to all spectators
+        for (auto it = spectator_fds.begin(); it != spectator_fds.end(); ) {
+            int spec_fd = *it;
+            try {
+                send_message(spec_fd, state_str);
+                ++it;
+            } catch (...) {
+                // Spectator disconnected, remove from list
+                cout << "[TetrisGameServer] Spectator (fd=" << spec_fd << ") send failed, removing" << endl;
+                close(spec_fd);
+                it = spectator_fds.erase(it);
+            }
+        }
 
         // --- 4️⃣ End condition ---
         if (game1.state().gameOver || game2.state().gameOver)
@@ -482,16 +591,44 @@ int start_game(json room, json pA, json pB){
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     string endtime=now_time_str();
+
+    send_message(datafd,json{{"action","query"},{"type","room"},{"id",room.value("id", -1)}}.dump());
+    string search_reply = recv_message(datafd);
+    json room_query = json::parse(search_reply);
+    if(room_query.value("response","failed") == "success" && room_query.contains("data")){
+        room = room_query["data"];
+        if(room.contains("specList") && room["specList"].is_array()){
+            for(auto &spec_entry : room["specList"]){
+                int spec_id = spec_entry.is_number_integer() ? spec_entry.get<int>() : -1;
+                if(spec_id < 0) continue;
+                send_message(datafd,json{{"action","query"},{"type","user"},{"id",spec_id}}.dump());
+                string spec_reply = recv_message(datafd);
+                json spec_res = json::parse(spec_reply);
+                if(spec_res.value("response","failed") != "success" || !spec_res.contains("data")) continue;
+                json spec_user = spec_res["data"];
+                spec_user["status"] = "idle";
+                spec_user["roomName"] = "-1";
+                send_message(datafd,json{{"action","update"},{"type","user"},{"data",spec_user}}.dump());
+                recv_message(datafd);
+            }
+        }
+    } else {
+        cerr << "[TetrisGameServer] Failed to re-query room for cleanup: " << room_query.dump() << endl;
+    }
     savetodataserver(room, game1, game2);
+
+
 
     // Delete the room after game over
     json cleanup_room = {
         {"action", "delete"},
         {"type", "room"},
-        {"data", room["name"]}
+        {"data", room.value("name","")}
     };
+    // cerr<<"fuck"<<room.dump()<<endl;
     send_message(datafd, cleanup_room.dump());
-    recv_message(datafd);  // Consume delete response
+    recv_message(datafd);
+    // cerr<<"fuck"<<recv_message(datafd)<<endl;  // Consume delete response
     //pA pB doesn't ensure who is host
     pA["roomName"]="-1";
     pA["status"]="idle";
@@ -514,8 +651,11 @@ int start_game(json room, json pA, json pB){
     send_message(datafd, update_pB.dump());
     recv_message(datafd);  // Consume update response
 
+    
+
     close(p1_fd);
     close(p2_fd);
+    for(auto &t:spectator_fds)close(t);
     close(listen_sock);
     close(epoll_fd);
 
@@ -653,16 +793,6 @@ int client_request(int fd,const string&msg){
             cerr<<"[GameServer] User in the game tried to do curroom, this is an issue\n";
             return -1;
         }
-        // send_message(datafd,json{{"action","query"},{"type","room"},{"name",current_room}}.dump());
-        // string room_reply = recv_message(datafd);
-        // json q=json::parse(room_reply);
-        // if(q.value("response", "failed") == "success" && q.contains("data")) {
-        //     cout << "[GameServer] User '" << me["name"] << "' retrieved current room: '" << current_room << "'" << endl;
-        //     send_message(fd,json{{"response","success"},{"data",json::array({q["data"]})}}.dump());
-        // } else {
-        //     cerr << "[GameServer] Current room query failed: room '" << current_room << "' not found" << endl;
-        //     send_message(fd,json{{"response","failed"},{"reason","room not found"}}.dump());
-        // }
         return 1;
     }
     else if (act == "curinvite") {
@@ -833,7 +963,58 @@ int client_request(int fd,const string&msg){
         }
     }
     else if(act=="spectate"){
-        throw(runtime_error("not implemented yet"));
+        string room=j["roomname"];
+        cerr << "[GameServer] User '" << me["name"] << "' attempting to spectate room '" << room << "'" << endl;
+
+        // Query the specific room
+        send_message(datafd,json{{"action","query"},{"type","room"},{"name",room}}.dump());
+        string room_reply = recv_message(datafd);
+        json room_res = json::parse(room_reply);
+
+        if(room_res.value("response","failed") != "success" || !room_res.contains("data")) {
+            cerr << "[GameServer] Spectate failed: room '" << room << "' not found" << endl;
+            send_message(fd,json{{"response","failed"},{"reason","no such room"}}.dump());
+            return 0;
+        }
+
+        json target = room_res["data"];
+
+        // Check if room is actually playing (spectators can only watch active games)
+        if(target["status"] != "playing"){
+            cerr << "[GameServer] Spectate failed: room '" << room << "' is not playing" << endl;
+            send_message(fd,json{{"response","failed"},{"reason","room not playing"}}.dump());
+            return 0;
+        }
+
+        // Update room status to add spec id to the room
+        if(!target.contains("specList") || !target["specList"].is_array()){
+            target["specList"] = json::array();
+        }
+        bool already_in = false;
+        for(auto &sid : target["specList"]){
+            if(sid == me["id"]){
+                already_in = true;
+                break;
+            }
+        }
+        if(!already_in){
+            target["specList"].push_back(me["id"]);
+        }
+        send_message(datafd,json{{"action","update"},{"type","room"},{"data",target}}.dump());
+        recv_message(datafd);  // Consume update response
+
+        // Update user status to spectating
+        me["roomName"] = room;
+        me["status"] = "spectating";
+        send_message(datafd,json{{"action","update"},{"type","user"},{"data",me}}.dump());
+        recv_message(datafd);  // Consume update response
+
+        cout << "[GameServer] User '" << me["name"] << "' successfully joined room '" << room << "' as spectator" << endl;
+
+        // Send success and room info to spectator
+        send_message(fd,json{{"response","success"}}.dump());
+        send_message(fd,json{{"action","spectate"},{"data",target}}.dump());
+        return 1;
     }
     send_message(fd,json{{"response","failed"},{"reason","unknown action"}}.dump());
     return 0;
