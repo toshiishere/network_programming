@@ -3,8 +3,8 @@ import socket, struct, json, select, sys
 import pygame
 
 # ========= Config =========
-SERVER_IP ="140.113.17.11"
-# SERVER_IP = "127.0.0.1"
+# SERVER_IP ="140.113.17.11"
+SERVER_IP = "127.0.0.1"
 SERVER_PORT = 45632
 
 
@@ -726,7 +726,7 @@ def main():
     while True:
         cmd = input("Enter 'login' or 'register' (or 'quit'): ").strip().lower()
         if cmd == "quit":
-            break
+            return
         if cmd not in ("login", "register"):
             print("Invalid command.\n")
             continue
