@@ -25,7 +25,7 @@ def recv_msg(sock):
     if not hdr:
         return None
     (length,) = struct.unpack("!I", hdr)
-    if length <= 0 or length > 10_000_000:
+    if length <= 0 or length > 65536:
         print("Invalid length from server:", length)
         return None
     payload = recv_exact(sock, length)
@@ -179,8 +179,7 @@ def room_op(sock, action:str):
             return -1
 
 
-# ========= Pygame Tetris GUI =========
-# Tetris piece shapes (matching C++ SHAPES array from tetris.cpp)
+# Tetirs
 SHAPES = {
     0: [],  # Empty
     1: [(0,1), (1,1), (2,1), (3,1)],  # I
