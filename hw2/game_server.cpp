@@ -15,6 +15,7 @@
 #include "nlohmann/json.hpp"
 #include <cassert>
 #include <thread>
+#include <signal.h>
 #include "tetris.h"
 
 using json=nlohmann::json; using namespace std;
@@ -445,6 +446,8 @@ int start_game(json room, json pA, json pB){
     // Main game loop with epoll
     epoll_event events[MAX_EVENTS];
     bool game_running = true;
+    bool player_disconnected = false;
+    int disconnected_fd = -1;
 
     // Initialize games with seed (use room_id for deterministic seeding, or add custom seed)
     uint32_t seed = room.value("seed", static_cast<uint32_t>(room_id));
@@ -495,6 +498,8 @@ int start_game(json room, json pA, json pB){
                             if (client_fd == p1_fd || client_fd == p2_fd) {
                                 cout << "[TetrisGameServer] Player disconnected (fd=" << client_fd << "). Ending game." << endl;
                                 game_running = false;
+                                player_disconnected = true;
+                                disconnected_fd = client_fd;
                             } else {
                                 // Remove spectator
                                 auto it = std::find(spectator_fds.begin(), spectator_fds.end(), client_fd);
@@ -521,6 +526,10 @@ int start_game(json room, json pA, json pB){
                     if (!game_running) break;
                 }
             }
+        }
+
+        if (!game_running && player_disconnected) {
+            break;
         }
 
         // --- 2️⃣ Advance both games ---
@@ -568,7 +577,8 @@ int start_game(json room, json pA, json pB){
 
     // Send final game over notification to both players
     // Each player sees their own result as "my_result" and opponent as "opponent_result"
-    bool p1_won = game2.state().gameOver; // p1 wins if p2's game is over
+    bool p1_won = player_disconnected ? (disconnected_fd == p2_fd) : game2.state().gameOver; // p1 wins if p2 tops out or disconnects
+    bool p2_won = player_disconnected ? (disconnected_fd == p1_fd) : game1.state().gameOver;
 
     json game_over_p1 = {
         {"action", "game_over"},
@@ -579,10 +589,15 @@ int start_game(json room, json pA, json pB){
 
     json game_over_p2 = {
         {"action", "game_over"},
-        {"won", !p1_won},
+        {"won", p2_won},
         {"my_result", game2.result_json()},
         {"opponent_result", game1.result_json()}
     };
+
+    if (player_disconnected) {
+        game_over_p1["aborted"] = true;
+        game_over_p2["aborted"] = true;
+    }
 
     send_message(p1_fd, game_over_p1.dump());
     send_message(p2_fd, game_over_p2.dump());
@@ -615,7 +630,11 @@ int start_game(json room, json pA, json pB){
     } else {
         cerr << "[TetrisGameServer] Failed to re-query room for cleanup: " << room_query.dump() << endl;
     }
-    savetodataserver(room, game1, game2);
+    if (!player_disconnected && (game1.state().gameOver || game2.state().gameOver)) {
+        savetodataserver(room, game1, game2);
+    } else {
+        cout << "[TetrisGameServer] Game aborted before completion; skipping save to data server." << endl;
+    }
 
 
 
@@ -1021,6 +1040,7 @@ int client_request(int fd,const string&msg){
 }
 
 int main() {
+    signal(SIGPIPE, SIG_IGN);
     // === Create game listening socket ===
     int listen_sock = socket(AF_INET, SOCK_STREAM, 0);
     if (listen_sock < 0) {

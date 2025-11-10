@@ -567,14 +567,25 @@ def play_game(lobby_sock, room_id, player_name,):
                         won = data.get('won', False)
                         my_result = data.get('my_result', {})
                         opponent_result = data.get('opponent_result', {})
+                        aborted = data.get('aborted', False)
 
                         print("\n" + "="*50)
-                        print("GAME OVER!")
-                        print("="*50)
-                        if won:
-                            print("You WON!")
+                        if aborted:
+                            print("GAME ABORTED!")
                         else:
-                            print("You LOST!")
+                            print("GAME OVER!")
+                        print("="*50)
+                        if aborted:
+                            print("Match ended early due to a disconnect.")
+                            if won:
+                                print("You are awarded the win by forfeit.")
+                            else:
+                                print("Opponent awarded the win by forfeit.")
+                        else:
+                            if won:
+                                print("You WON!")
+                            else:
+                                print("You LOST!")
                         print(f"\nYour Stats:")
                         print(f"  Score: {my_result.get('score', 0)}")
                         print(f"  Lines: {my_result.get('lines', 0)}")
@@ -686,7 +697,10 @@ def spectate_game(room_id, spectator_name):
                     break
                 data = json.loads(msg)
                 if data.get('action') == 'game_over':
-                    print("Spectated match finished.")
+                    if data.get('aborted'):
+                        print("Spectated match ended early (player disconnected).")
+                    else:
+                        print("Spectated match finished.")
                     running = False
                 elif 'f' in data:
                     frame_no = data.get('f', frame_no)
