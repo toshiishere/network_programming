@@ -1,0 +1,3 @@
+when the developer update the game, automatically rotate the game version in default
+max player info should be written in game individually, add a file in game to show the game info, including description, display name, max player
+the rps game didn't start, the pygame board was full black, fix it

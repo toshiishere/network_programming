@@ -54,15 +54,12 @@ def main():
             c1 = recv_line(clients[0]).strip()
             if c1 not in CHOICES:
                 c1 = "rock"
-            print(f"[RPS SERVER] player1 chose {c1}")
             send_line(clients[1], "your_turn")
             c2 = recv_line(clients[1]).strip()
             if c2 not in CHOICES:
                 c2 = "rock"
-            print(f"[RPS SERVER] player2 chose {c2}")
 
             r = outcome(c1, c2)
-            print(f"[RPS SERVER] outcome: {r} ({c1} vs {c2})")
             if r == "tie":
                 send_line(clients[0], f"result tie {c1} vs {c2}")
                 send_line(clients[1], f"result tie {c2} vs {c1}")

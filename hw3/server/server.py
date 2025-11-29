@@ -108,6 +108,45 @@ def save_players(p: dict):
     save_json(PLAYERS_JSON, p)
 
 
+def bump_version(current: str) -> str:
+    parts = (current.split(".") + ["0", "0", "0"])[:3]
+    try:
+        major, minor, patch = (int(p) for p in parts)
+    except ValueError:
+        return "1.0.0"
+    patch += 1
+    return f"{major}.{minor}.{patch}"
+
+
+def write_game_info_file(game_id: str, meta: dict):
+    """Write metadata into server/database/games/<game_id>/game_info.json."""
+    game_dir = os.path.join(GAMES_DIR, game_id)
+    os.makedirs(game_dir, exist_ok=True)
+    info = {
+        "id": game_id,
+        "name": meta.get("name", game_id),
+        "description": meta.get("description", ""),
+        "max_players": meta.get("max_players", 2),
+        "version": meta.get("version", ""),
+    }
+    path = os.path.join(game_dir, "game_info.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(info, f, indent=2, ensure_ascii=False)
+
+
+def migrate_games_metadata():
+    """Ensure games have max_players metadata and info files."""
+    games = load_games()
+    changed = False
+    for game_id, meta in games.items():
+        if "max_players" not in meta:
+            meta["max_players"] = 2
+            changed = True
+        write_game_info_file(game_id, meta)
+    if changed:
+        save_games(games)
+
+
 def save_state_snapshot():
     """Persist volatile server state such as rooms and online users."""
     with lock:
@@ -349,9 +388,21 @@ class ClientThread(threading.Thread):
         game_id = data.get("game_id")
         max_players = int(data.get("max_players", 2))
         games = load_games()
-        if game_id not in games:
+        game = games.get(game_id)
+        if not game:
             self.send("error", {"reason": "game_not_found"})
             return
+        try:
+            game_limit = int(game.get("max_players", 8) or 8)
+        except (TypeError, ValueError):
+            game_limit = 8
+        if game_limit < 2:
+            game_limit = 2
+        try:
+            max_players = int(max_players)
+        except (TypeError, ValueError):
+            max_players = game_limit
+        max_players = max(2, min(max_players, game_limit))
         room_id = next_room_id()
         with lock:
             rooms[room_id] = {
@@ -362,6 +413,7 @@ class ClientThread(threading.Thread):
                 "ready": {self.username: False},
                 "status": "waiting",
                 "port": None,
+                "max_players": max_players,
             }
         self.send("ok", {"room_id": room_id})
 
@@ -376,7 +428,7 @@ class ClientThread(threading.Thread):
                 return
             if self.username in room["players"]:
                 pass
-            elif len(room["players"]) >= 8:
+            elif len(room["players"]) >= room.get("max_players", 8):
                 self.send("error", {"reason": "room_full"})
                 return
             else:
@@ -547,7 +599,8 @@ class ClientThread(threading.Thread):
         game_id = data.get("game_id")
         name = data.get("name")
         description = data.get("description", "")
-        version = data.get("version", "1.0.0")
+        version = data.get("version")
+        max_players = data.get("max_players", 2)
         zip_b64 = data.get("zip_b64")
 
         if not (game_id and name and zip_b64):
@@ -557,12 +610,24 @@ class ClientThread(threading.Thread):
         zip_bytes = base64.b64decode(zip_b64)
 
         games = load_games()
+        existing = games.get(game_id)
+        try:
+            max_players = int(max_players)
+        except (TypeError, ValueError):
+            max_players = 2
+        if max_players < 2:
+            max_players = 2
+        latest_version = (existing or {}).get("version", "1.0.0")
+        if not version or str(version).lower() == "auto":
+            version = bump_version(latest_version)
+
         # create or update
         games[game_id] = {
             "id": game_id,
             "name": name,
             "description": description,
             "version": version,
+            "max_players": max_players,
             "author": self.username,
             "reviews": games.get(game_id, {}).get("reviews", []),
             "avg_rating": games.get(game_id, {}).get("avg_rating", None),
@@ -570,6 +635,7 @@ class ClientThread(threading.Thread):
         save_games(games)
 
         store_uploaded_game(game_id, zip_bytes)
+        write_game_info_file(game_id, games[game_id])
         self.send("ok", {"msg": "game_uploaded_or_updated"})
 
     def handle_dev_delete_game(self, data: dict):
@@ -606,6 +672,7 @@ class ClientThread(threading.Thread):
 
 def main():
     ensure_dirs()
+    migrate_games_metadata()
     print(f"[INFO] server listening on {HOST}:{PORT}")
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((HOST, PORT))

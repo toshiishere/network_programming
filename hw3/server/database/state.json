@@ -1,0 +1,19 @@
+{
+  "rooms": [
+    {
+      "id": 1,
+      "game_id": "rps",
+      "host": "user1",
+      "players": [
+        "user1"
+      ],
+      "ready": {
+        "user1": true
+      },
+      "status": "in_game",
+      "port": 6000
+    }
+  ],
+  "online_players": [],
+  "online_devs": []
+}

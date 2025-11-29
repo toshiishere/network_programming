@@ -133,7 +133,11 @@ class DevClient:
         game_id = input("Game folder name (game_id): ").strip()
         name = input("Game display name: ").strip()
         description = input("Description: ").strip()
-        version = input("Version (e.g. 1.0.0): ").strip() or "1.0.0"
+        version = input("Version (blank to auto bump): ").strip()
+        try:
+            max_players = int(input("Max players (default 2): ").strip() or 2)
+        except ValueError:
+            max_players = 2
 
         # Zip folder
         try:
@@ -149,6 +153,7 @@ class DevClient:
             "name": name,
             "description": description,
             "version": version,
+            "max_players": max_players,
             "zip_b64": zip_b64
         })
 

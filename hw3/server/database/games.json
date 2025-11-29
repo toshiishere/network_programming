@@ -1,17 +1,12 @@
 {
   "rps": {
     "id": "rps",
-    "name": "rock_paper_scisor",
-    "description": "a simple game to compete",
-    "version": "1.0.0",
+    "name": "rps",
+    "description": "",
+    "version": "1.1.1",
+    "max_players": 2,
     "author": "dev1",
-    "reviews": [
-      {
-        "user": "user1",
-        "rating": 5,
-        "comment": "adfadsfa"
-      }
-    ],
-    "avg_rating": 5.0
+    "reviews": [],
+    "avg_rating": null
   }
 }
