@@ -3,15 +3,20 @@
     {
       "id": 1,
       "game_id": "rps",
+      "game_name": "Rock Paper Scissors",
+      "game_description": "Classic quick duel of rock, paper, scissors.",
       "host": "user1",
       "players": [
-        "user1"
+        "user1",
+        "user2"
       ],
       "ready": {
-        "user1": true
+        "user1": true,
+        "user2": true
       },
       "status": "in_game",
-      "port": 6000
+      "port": 6000,
+      "max_players": 2
     }
   ],
   "online_players": [],

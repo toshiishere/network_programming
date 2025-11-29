@@ -3,6 +3,7 @@ import argparse
 import socket
 import pygame
 import sys
+import threading
 
 WIDTH, HEIGHT = 600, 400
 CHOICES = ["rock", "paper", "scissors"]
@@ -45,16 +46,40 @@ def main():
         rect = pygame.Rect(50 + i * 180, 200, 150, 60)
         buttons.append((rect, ch))
 
-    choice_made = None
-    result_text = "Waiting for server..."
-    waiting_for_turn = True
+    state = {
+        "result_text": "Waiting for opponent...",
+        "status_text": "Waiting for opponent...",
+        "can_choose": False,
+        "waiting_for_result": False,
+    }
 
     clock = pygame.time.Clock()
 
-    # Wait for "your_turn"
-    msg = recv_line(sock)
-    if not msg.startswith("your_turn"):
-        result_text = "Protocol error"
+    def wait_for_start():
+        try:
+            msg = recv_line(sock)
+            if msg.startswith("your_turn"):
+                state["status_text"] = "Your turn! Pick rock, paper or scissors."
+                state["result_text"] = state["status_text"]
+                state["can_choose"] = True
+            else:
+                state["status_text"] = f"Unexpected: {msg}"
+                state["result_text"] = state["status_text"]
+        except Exception as exc:
+            state["status_text"] = f"Connection error: {exc}"
+            state["result_text"] = state["status_text"]
+
+    def wait_for_result():
+        try:
+            rmsg = recv_line(sock)
+            state["result_text"] = rmsg
+        except Exception as exc:
+            state["result_text"] = f"Connection error: {exc}"
+        finally:
+            state["status_text"] = state["result_text"]
+            state["waiting_for_result"] = False
+
+    threading.Thread(target=wait_for_start, daemon=True).start()
 
     running = True
     while running:
@@ -62,16 +87,19 @@ def main():
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
-            elif event.type == pygame.MOUSEBUTTONDOWN and waiting_for_turn:
+            elif (event.type == pygame.MOUSEBUTTONDOWN and state["can_choose"]
+                  and not state["waiting_for_result"]):
                 x, y = event.pos
                 for rect, ch in buttons:
                     if rect.collidepoint(x, y):
-                        choice_made = ch
-                        send_line(sock, ch)
-                        waiting_for_turn = False
-                        # wait for result
-                        rmsg = recv_line(sock)
-                        result_text = rmsg
+                        try:
+                            send_line(sock, ch)
+                            state["can_choose"] = False
+                            state["waiting_for_result"] = True
+                            state["status_text"] = "Waiting for result..."
+                            threading.Thread(target=wait_for_result, daemon=True).start()
+                        except Exception as exc:
+                            state["result_text"] = f"Send failed: {exc}"
                         break
 
         screen.fill((30, 30, 30))
@@ -79,8 +107,7 @@ def main():
         title_surf = big_font.render("Rock Paper Scissors", True, (255, 255, 255))
         screen.blit(title_surf, (WIDTH // 2 - title_surf.get_width() // 2, 50))
 
-        instr = "Click a choice" if waiting_for_turn else "Result received"
-        instr_surf = font.render(instr, True, (200, 200, 200))
+        instr_surf = font.render(state["status_text"], True, (200, 200, 200))
         screen.blit(instr_surf, (WIDTH // 2 - instr_surf.get_width() // 2, 120))
 
         for rect, ch in buttons:
@@ -89,7 +116,7 @@ def main():
             screen.blit(txt, (rect.x + rect.width // 2 - txt.get_width() // 2,
                               rect.y + rect.height // 2 - txt.get_height() // 2))
 
-        res_surf = font.render(result_text, True, (255, 255, 0))
+        res_surf = font.render(state["result_text"], True, (255, 255, 0))
         screen.blit(res_surf, (WIDTH // 2 - res_surf.get_width() // 2, 300))
 
         pygame.display.flip()

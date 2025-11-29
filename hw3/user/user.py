@@ -185,6 +185,9 @@ class App(tk.Tk):
 
         self.client = UserClient()
         self.current_game_id = None
+        self.base_title = "HW3 Game Lobby"
+        self.is_gaming = False
+        self.game_process = None
 
         self.container = ttk.Frame(self)
         self.container.pack(fill="both", expand=True)
@@ -210,19 +213,47 @@ class App(tk.Tk):
         if not os.path.exists(client_entry):
             messagebox.showerror("Error", f"client_entry.py not found for game '{game_id}'")
             return
-        subprocess.Popen([
-            sys.executable,
-            client_entry,
-            "--host", host,
-            "--port", str(port)
-        ])
-        # After launching, move to rate frame (user can rate after finishing)
-        self.current_game_id = game_id
-        self.show_frame("RateFrame")
+        try:
+            self.game_process = subprocess.Popen([
+                sys.executable,
+                client_entry,
+                "--host", host,
+                "--port", str(port)
+            ])
+            self.is_gaming = True
+            self.set_title_user(self.client.username, gaming=True)
+            self.current_game_id = game_id
+            self.after(1000, self._poll_game_process)
+        except Exception as exc:
+            messagebox.showerror("Error", f"Failed to launch game: {exc}")
 
     def on_closing(self):
         self.client.close()
         self.destroy()
+
+    def set_title_user(self, username, gaming=False):
+        title = self.base_title
+        if username:
+            title = f"{self.base_title} - {username}"
+        if gaming:
+            title += " [Gaming]"
+        self.title(title)
+
+    def _poll_game_process(self):
+        if self.game_process and self.game_process.poll() is None:
+            # still running
+            self.after(1000, self._poll_game_process)
+            return
+        # finished
+        self.is_gaming = False
+        self.set_title_user(self.client.username)
+        self.game_process = None
+        try:
+            self.client.leave_room()
+        except Exception:
+            pass
+        if self.current_game_id:
+            self.show_frame("RateFrame")
 
 
 class LoginFrame(ttk.Frame):
@@ -269,6 +300,7 @@ class LoginFrame(ttk.Frame):
             messagebox.showerror("Login failed", str(resp))
         else:
             messagebox.showinfo("Login", "Logged in as player")
+            self.app.set_title_user(u)
             self.app.show_frame("LobbyFrame")
 
 
@@ -276,6 +308,7 @@ class LobbyFrame(ttk.Frame):
     def __init__(self, parent, app: App):
         super().__init__(parent)
         self.app = app
+        self.games_data = {}
 
         top = ttk.Frame(self)
         top.pack(fill="x", pady=5)
@@ -290,7 +323,11 @@ class LobbyFrame(ttk.Frame):
         games_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         self.games_list = tk.Listbox(games_frame, height=10)
         self.games_list.pack(fill="both", expand=True)
-        ttk.Button(games_frame, text="Refresh Games", command=self.refresh_games).pack(pady=5)
+        self.games_list.bind("<Double-Button-1>", self.show_game_info)
+        btns_games = ttk.Frame(games_frame)
+        btns_games.pack(pady=5)
+        ttk.Button(btns_games, text="Refresh Games", command=self.refresh_games).grid(row=0, column=0, padx=2)
+        ttk.Button(btns_games, text="View Info", command=self.show_game_info).grid(row=0, column=1, padx=2)
 
         # Rooms list
         rooms_frame = ttk.LabelFrame(main, text="Rooms")
@@ -322,6 +359,7 @@ class LobbyFrame(ttk.Frame):
     def logout(self):
         self.app.client.leave_room()
         self.app.client.username = None
+        self.app.set_title_user(None)
         self.app.show_frame("LoginFrame")
 
     def refresh_games(self):
@@ -330,7 +368,8 @@ class LobbyFrame(ttk.Frame):
         if resp.get("action") == "error":
             messagebox.showerror("Error", str(resp))
             return
-        for g in resp["data"]["games"]:
+        self.games_data = {g["id"]: g for g in resp["data"]["games"]}
+        for g in self.games_data.values():
             line = f"{g['id']} [{g['version']}] {g['name']} (by {g['author']})"
             self.games_list.insert(tk.END, line)
 
@@ -359,6 +398,33 @@ class LobbyFrame(ttk.Frame):
             return None
         text = self.games_list.get(sel[0])
         return text.split()[0]  # first token is game_id
+
+    def get_selected_game(self):
+        gid = self.get_selected_game_id()
+        if not gid:
+            return None, None
+        return gid, self.games_data.get(gid)
+
+    def show_game_info(self, event=None):
+        gid, g = self.get_selected_game()
+        if not gid:
+            messagebox.showwarning("Warning", "Select a game first")
+            return
+        if not g:
+            messagebox.showerror("Error", "Game data not available. Refresh games and try again.")
+            return
+        avg = g.get("avg_rating")
+        avg_text = f"{avg:.2f}" if isinstance(avg, (int, float)) else "N/A"
+        info_lines = [
+            f"Name: {g.get('name', gid)}",
+            f"ID: {gid}",
+            f"Version: {g.get('version', '')}",
+            f"Author: {g.get('author', '')}",
+            f"Max players: {g.get('max_players', 'N/A')}",
+            f"Avg rating: {avg_text}",
+            f"Description: {g.get('description', '')}",
+        ]
+        messagebox.showinfo("Game Info", "\n".join(info_lines))
 
     def get_selected_room_id(self):
         sel = self.rooms_list.curselection()
@@ -420,6 +486,10 @@ class RoomFrame(ttk.Frame):
     def back_lobby(self):
         self.app.client.leave_room()
         self.app.show_frame("LobbyFrame")
+        if self.app.is_gaming:
+            # if user leaves early, stop tracking
+            self.app.is_gaming = False
+            self.app.set_title_user(self.app.client.username)
 
     def leave_room(self):
         self.app.client.leave_room()
@@ -453,10 +523,13 @@ class RoomFrame(ttk.Frame):
             messagebox.showwarning("Warning", "Not in a room")
             return
         resp = self.app.client.get_room(rid)
-        if resp.get("action") == "error":
+        if resp.get("action") != "get_room":
             messagebox.showerror("Error", str(resp))
             return
-        room = resp["data"]["room"]
+        room = resp.get("data", {}).get("room")
+        if not room:
+            messagebox.showerror("Error", "Room not found")
+            return
         game_id = room["game_id"]
 
         # first try ready: if need_update, download game
@@ -484,8 +557,24 @@ class RoomFrame(ttk.Frame):
             self.app.launch_game_client(game_id, host, port)
         elif result.get("action") == "ready":
             messagebox.showinfo("Ready", "You are ready. Waiting for others...")
+            self.after(1000, lambda: self.poll_room_start(rid, game_id))
         else:
             messagebox.showerror("Error", str(result))
+
+    def poll_room_start(self, room_id, game_id):
+        resp = self.app.client.get_room(room_id)
+        if resp.get("action") != "get_room":
+            return
+        room = resp.get("data", {}).get("room")
+        if not room:
+            return
+        if room.get("status") == "in_game" and room.get("port"):
+            host = SERVER_HOST
+            port = room["port"]
+            messagebox.showinfo("Game", f"Game started on {host}:{port}")
+            self.app.launch_game_client(game_id, host, port)
+        else:
+            self.after(1000, lambda: self.poll_room_start(room_id, game_id))
 
 
 class RateFrame(ttk.Frame):
@@ -532,6 +621,7 @@ class RateFrame(ttk.Frame):
         else:
             messagebox.showinfo("Thank you", "Rating submitted")
             self.comment_text.delete("1.0", tk.END)
+            self.app.show_frame("LobbyFrame")
 
     def back_lobby(self):
         self.app.show_frame("LobbyFrame")

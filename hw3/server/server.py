@@ -377,16 +377,16 @@ class ClientThread(threading.Thread):
     def handle_list_players(self):
         if not self.require_login():
             return
-        players = load_players()
-        # (online/offline not tracked here)
-        plist = [{"username": u} for u in players.keys()]
+        with lock:
+            online = list(online_users["player"].keys())
+        plist = [{"username": u} for u in online]
         self.send("list_players", {"players": plist})
 
     def handle_create_room(self, data: dict):
         if not self.require_login(role="player"):
             return
         game_id = data.get("game_id")
-        max_players = int(data.get("max_players", 2))
+        raw_max = data.get("max_players")
         games = load_games()
         game = games.get(game_id)
         if not game:
@@ -398,16 +398,21 @@ class ClientThread(threading.Thread):
             game_limit = 8
         if game_limit < 2:
             game_limit = 2
-        try:
-            max_players = int(max_players)
-        except (TypeError, ValueError):
+        if raw_max is None:
             max_players = game_limit
+        else:
+            try:
+                max_players = int(raw_max)
+            except (TypeError, ValueError):
+                max_players = game_limit
         max_players = max(2, min(max_players, game_limit))
         room_id = next_room_id()
         with lock:
             rooms[room_id] = {
                 "id": room_id,
                 "game_id": game_id,
+                "game_name": game.get("name", game_id),
+                "game_description": game.get("description", ""),
                 "host": self.username,
                 "players": [self.username],
                 "ready": {self.username: False},
@@ -603,23 +608,40 @@ class ClientThread(threading.Thread):
         max_players = data.get("max_players", 2)
         zip_b64 = data.get("zip_b64")
 
-        if not (game_id and name and zip_b64):
+        if not (game_id and zip_b64):
             self.send("error", {"reason": "bad_request"})
             return
 
         zip_bytes = base64.b64decode(zip_b64)
 
+        # Try to read game_info.json from uploaded zip for metadata defaults
+        info = {}
+        try:
+            with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as zf:
+                if "game_info.json" in zf.namelist():
+                    info = json.loads(zf.read("game_info.json").decode("utf-8"))
+        except Exception as exc:
+            print(f"[WARN] failed to read game_info.json for {game_id}: {exc}")
+
         games = load_games()
         existing = games.get(game_id)
         try:
-            max_players = int(max_players)
+            max_players = int(info.get("max_players", max_players))
         except (TypeError, ValueError):
             max_players = 2
         if max_players < 2:
             max_players = 2
+        name = info.get("name") or name
+        description = info.get("description", description)
+        if not name:
+            self.send("error", {"reason": "bad_request", "detail": "name missing"})
+            return
         latest_version = (existing or {}).get("version", "1.0.0")
         if not version or str(version).lower() == "auto":
             version = bump_version(latest_version)
+        # allow explicit version override from info file if provided
+        if str(version).lower() == "use_info" and info.get("version"):
+            version = str(info.get("version"))
 
         # create or update
         games[game_id] = {

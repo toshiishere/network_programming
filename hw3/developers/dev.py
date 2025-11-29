@@ -1,10 +1,10 @@
 # developers/dev.py
 import socket
-import json
 import os
 import base64
 import zipfile
 import io
+import json
 
 SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 5555
@@ -52,6 +52,17 @@ def zip_game_folder(game_id: str) -> bytes:
                 rel = os.path.relpath(full, folder)
                 zf.write(full, arcname=rel)
     return buf.getvalue()
+
+
+def load_game_info(game_id: str) -> dict:
+    path = os.path.join(GAMES_DIR, game_id, "game_info.json")
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
 
 
 # -------------------- Developer Client --------------------
@@ -131,13 +142,15 @@ class DevClient:
         print()
 
         game_id = input("Game folder name (game_id): ").strip()
-        name = input("Game display name: ").strip()
-        description = input("Description: ").strip()
-        version = input("Version (blank to auto bump): ").strip()
+        info = load_game_info(game_id)
+        name = input(f"Game display name [{info.get('name', '')}]: ").strip() or info.get("name", "")
+        description = input(f"Description [{info.get('description', '')}]: ").strip() or info.get("description", "")
+        version = input(f"Version (blank to auto bump, 'use_info' to use game_info version {info.get('version', '')}): ").strip()
         try:
-            max_players = int(input("Max players (default 2): ").strip() or 2)
+            max_players_input = input(f"Max players (default {info.get('max_players', 2)}): ").strip()
+            max_players = int(max_players_input or info.get("max_players", 2))
         except ValueError:
-            max_players = 2
+            max_players = info.get("max_players", 2)
 
         # Zip folder
         try:
