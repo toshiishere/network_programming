@@ -320,7 +320,7 @@ int start_game(json room, json pA, json pB){
     send_message(datafd, update_room.dump());
     recv_message(datafd);  // Consume update response
 
-    // Accept connections and identify host/opponent (spectators may attempt to connect early)
+    // Accept connections and identify host/opponent
     socklen_t sl = sizeof(addr);
     int host_fd = -1, oppo_fd = -1;
     std::vector<int> pending_spectators;

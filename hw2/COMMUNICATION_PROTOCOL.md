@@ -646,6 +646,7 @@ Sent to data server for logging when game ends.
   "oppoUser": "bob",
   "visibility": "public | private",
   "inviteList": [42, 57],
+  "speclist": [8, 3],
   "status": "idle | playing",
   "difficulty": 10
 }
@@ -661,11 +662,7 @@ Sent to data server for logging when game ends.
 
 ```json
 {
-  "room": {
-    "id": 1,
-    "name": "My Room",
-    "difficulty": 10
-  },
+  "room": 'a room structure',
   "hostUser": "alice",
   "oppoUser": "bob",
   "host_result": {
