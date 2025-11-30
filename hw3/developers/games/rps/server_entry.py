@@ -5,16 +5,6 @@ import argparse
 CHOICES = ["rock", "paper", "scissors"]
 
 
-def outcome(a, b):
-    if a == b:
-        return "tie"
-    if (a == "rock" and b == "scissors") or \
-       (a == "scissors" and b == "paper") or \
-       (a == "paper" and b == "rock"):
-        return "a"
-    return "b"
-
-
 def recv_line(sock):
     buf = []
     while True:
@@ -36,39 +26,57 @@ def main():
     parser.add_argument("--host", required=True)
     parser.add_argument("--port", required=True, type=int)
     parser.add_argument("--room", required=False)
+    parser.add_argument("--players", required=False, type=int, default=2)
     args = parser.parse_args()
+
+    target_players = max(2, min(args.players, 10))
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((args.host, args.port))
         s.listen()
-        print(f"[RPS SERVER] listening on {args.host}:{args.port}")
+        print(f"[RPS SERVER] listening on {args.host}:{args.port} for {target_players} players")
 
         clients = []
-        while len(clients) < 2:
+        while len(clients) < target_players:
             conn, addr = s.accept()
             print("[RPS SERVER] client connected", addr)
             clients.append(conn)
 
         try:
-            send_line(clients[0], "your_turn")
-            c1 = recv_line(clients[0]).strip()
-            if c1 not in CHOICES:
-                c1 = "rock"
-            send_line(clients[1], "your_turn")
-            c2 = recv_line(clients[1]).strip()
-            if c2 not in CHOICES:
-                c2 = "rock"
+            choices = []
+            for idx, c in enumerate(clients):
+                send_line(c, "your_turn")
+                choice = recv_line(c).strip()
+                if choice not in CHOICES:
+                    choice = "rock"
+                choices.append(choice)
+                print(f"[RPS SERVER] player{idx+1} chose {choice}")
 
-            r = outcome(c1, c2)
-            if r == "tie":
-                send_line(clients[0], f"result tie {c1} vs {c2}")
-                send_line(clients[1], f"result tie {c2} vs {c1}")
-            elif r == "a":
-                send_line(clients[0], f"result win {c1} vs {c2}")
-                send_line(clients[1], f"result lose {c2} vs {c1}")
+            counts = {m: choices.count(m) for m in CHOICES}
+            distinct = set(choices)
+            if len(distinct) == 1 or len(distinct) == 3:
+                winning_move = None
+            elif distinct == {"rock", "paper"}:
+                winning_move = "paper"
+            elif distinct == {"rock", "scissors"}:
+                winning_move = "rock"
             else:
-                send_line(clients[0], f"result lose {c1} vs {c2}")
-                send_line(clients[1], f"result win {c2} vs {c1}")
+                winning_move = "scissors"
+
+            for idx, c in enumerate(clients):
+                choice = choices[idx]
+                if winning_move is None:
+                    outcome = "tie"
+                elif choice == winning_move:
+                    outcome = "win"
+                else:
+                    outcome = "lose"
+                summary = f"result {outcome} you={choice} winning_move={winning_move or 'tie'} counts=rock:{counts['rock']},paper:{counts['paper']},scissors:{counts['scissors']}"
+                send_line(c, summary)
+            if winning_move:
+                print(f"[RPS SERVER] winning move: {winning_move}")
+            else:
+                print("[RPS SERVER] tie")
         finally:
             for c in clients:
                 c.close()

@@ -2,5 +2,7 @@
   "id": "rps",
   "name": "Rock Paper Scissors",
   "description": "Classic quick duel of rock, paper, scissors.",
-  "max_players": 2
+  "max_players": 10,
+  "min_players": 2,
+  "version": "1.1.1"
 }

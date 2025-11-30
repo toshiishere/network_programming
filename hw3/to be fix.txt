@@ -1,2 +1,0 @@
-add the feature of user viewing game's property when clicked on the game
-and delete the room when all of the user quit the room, also delete the room when the game is over

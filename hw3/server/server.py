@@ -127,6 +127,7 @@ def write_game_info_file(game_id: str, meta: dict):
         "name": meta.get("name", game_id),
         "description": meta.get("description", ""),
         "max_players": meta.get("max_players", 2),
+        "min_players": meta.get("min_players", 2),
         "version": meta.get("version", ""),
     }
     path = os.path.join(game_dir, "game_info.json")
@@ -142,6 +143,22 @@ def migrate_games_metadata():
         if "max_players" not in meta:
             meta["max_players"] = 2
             changed = True
+        if "min_players" not in meta:
+            meta["min_players"] = 2
+            changed = True
+        # sanity: min <= max and at least 2
+        try:
+            meta["max_players"] = int(meta.get("max_players", 2))
+        except (TypeError, ValueError):
+            meta["max_players"] = 2
+        try:
+            meta["min_players"] = int(meta.get("min_players", 2))
+        except (TypeError, ValueError):
+            meta["min_players"] = 2
+        if meta["min_players"] < 2:
+            meta["min_players"] = 2
+        if meta["min_players"] > meta["max_players"]:
+            meta["min_players"] = meta["max_players"]
         write_game_info_file(game_id, meta)
     if changed:
         save_games(games)
@@ -192,7 +209,7 @@ def zip_game_folder(game_id: str) -> bytes:
     return buf.getvalue()
 
 
-def start_game_server(game_id: str, room_id: int) -> int:
+def start_game_server(game_id: str, room_id: int, player_count: int = 2) -> int:
     """
     Spawn game server process:
       python server/database/games/<game_id>/server_entry.py --host HOST --port <port> --room <room_id>
@@ -210,13 +227,14 @@ def start_game_server(game_id: str, room_id: int) -> int:
         print(f"[WARN] server_entry.py not found for game {game_id}")
         return port
 
-    print(f"[INFO] starting game server {game_id} for room {room_id} on {HOST}:{port}")
+    print(f"[INFO] starting game server {game_id} for room {room_id} on {HOST}:{port} players={player_count}")
     subprocess.Popen([
         sys.executable,
         server_entry,
         "--host", HOST,
         "--port", str(port),
         "--room", str(room_id),
+        "--players", str(player_count),
     ])
     return port
 
@@ -299,6 +317,8 @@ class ClientThread(threading.Thread):
             if self.username and self.role in online_users:
                 with lock:
                     online_users[self.role].pop(self.username, None)
+            if self.username:
+                print(f"[INFO] {self.role} '{self.username}' logged out")
             print(f"[INFO] connection closed {self.addr}")
             self.conn.close()
 
@@ -357,6 +377,7 @@ class ClientThread(threading.Thread):
 
         self.username = username
         self.role = role
+        print(f"[INFO] {role} '{username}' logged in from {self.addr}")
         self.send("ok", {"role": role})
 
     # ---------- player lobby ----------
@@ -386,26 +407,27 @@ class ClientThread(threading.Thread):
         if not self.require_login(role="player"):
             return
         game_id = data.get("game_id")
-        raw_max = data.get("max_players")
         games = load_games()
         game = games.get(game_id)
         if not game:
             self.send("error", {"reason": "game_not_found"})
             return
         try:
-            game_limit = int(game.get("max_players", 8) or 8)
+            game_max = int(game.get("max_players", 2))
         except (TypeError, ValueError):
-            game_limit = 8
-        if game_limit < 2:
-            game_limit = 2
-        if raw_max is None:
-            max_players = game_limit
-        else:
-            try:
-                max_players = int(raw_max)
-            except (TypeError, ValueError):
-                max_players = game_limit
-        max_players = max(2, min(max_players, game_limit))
+            game_max = 2
+        try:
+            game_min = int(game.get("min_players", 2))
+        except (TypeError, ValueError):
+            game_min = 2
+        if game_max < 2:
+            game_max = 2
+        if game_min < 2:
+            game_min = 2
+        if game_min > game_max:
+            game_min = game_max
+        max_players = game_max
+        min_players = game_min
         room_id = next_room_id()
         with lock:
             rooms[room_id] = {
@@ -419,6 +441,7 @@ class ClientThread(threading.Thread):
                 "status": "waiting",
                 "port": None,
                 "max_players": max_players,
+                "min_players": min_players,
             }
         self.send("ok", {"room_id": room_id})
 
@@ -503,12 +526,14 @@ class ClientThread(threading.Thread):
             ready_count = sum(1 for v in room["ready"].values() if v)
             print(f"[INFO] {self.username} is ready in room {room_id} ({ready_count}/{len(room['players'])})")
             all_ready = all(room["ready"].get(u, False) for u in room["players"])
-            starting_allowed = all_ready and room["status"] == "waiting"
+            enough_players = len(room["players"]) >= room.get("min_players", 2)
+            starting_allowed = all_ready and room["status"] == "waiting" and enough_players
             existing_port = room.get("port")
 
         # start server outside lock to avoid blocking other threads
         if starting_allowed:
-            port = start_game_server(game_id, room_id)
+            player_count = len(room.get("players", []))
+            port = start_game_server(game_id, room_id, player_count)
             with lock:
                 room = rooms.get(room_id)
                 if room:
@@ -605,7 +630,6 @@ class ClientThread(threading.Thread):
         name = data.get("name")
         description = data.get("description", "")
         version = data.get("version")
-        max_players = data.get("max_players", 2)
         zip_b64 = data.get("zip_b64")
 
         if not (game_id and zip_b64):
@@ -626,11 +650,19 @@ class ClientThread(threading.Thread):
         games = load_games()
         existing = games.get(game_id)
         try:
-            max_players = int(info.get("max_players", max_players))
+            max_players = int(info.get("max_players", 2))
         except (TypeError, ValueError):
             max_players = 2
+        try:
+            min_players = int(info.get("min_players", 2))
+        except (TypeError, ValueError):
+            min_players = 2
         if max_players < 2:
             max_players = 2
+        if min_players < 2:
+            min_players = 2
+        if min_players > max_players:
+            min_players = max_players
         name = info.get("name") or name
         description = info.get("description", description)
         if not name:
@@ -650,6 +682,7 @@ class ClientThread(threading.Thread):
             "description": description,
             "version": version,
             "max_players": max_players,
+            "min_players": min_players,
             "author": self.username,
             "reviews": games.get(game_id, {}).get("reviews", []),
             "avg_rating": games.get(game_id, {}).get("avg_rating", None),

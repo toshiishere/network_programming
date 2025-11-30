@@ -3,29 +3,20 @@
     "id": "rps",
     "name": "Rock Paper Scissors",
     "description": "Classic quick duel of rock, paper, scissors.",
-    "version": "1.0.2",
-    "max_players": 2,
+    "version": "1.0.1",
+    "max_players": 10,
+    "min_players": 2,
     "author": "dev1",
     "reviews": [
       {
         "user": "user1",
         "rating": 5,
-        "comment": "top game ever"
+        "comment": ""
       },
       {
         "user": "user2",
         "rating": 5,
-        "comment": "jhcghyctctu"
-      },
-      {
-        "user": "user2",
-        "rating": 5,
-        "comment": "oihrhuowru"
-      },
-      {
-        "user": "user1",
-        "rating": 5,
-        "comment": "jipwrojirwohiwr"
+        "comment": ""
       }
     ],
     "avg_rating": 5.0

@@ -1,0 +1,8 @@
+{
+  "id": "connect4",
+  "name": "Connect 4",
+  "description": "Drop discs to connect four in a row.",
+  "max_players": 2,
+  "min_players": 2,
+  "version": "1.0.0"
+}

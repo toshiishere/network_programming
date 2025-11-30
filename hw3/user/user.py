@@ -189,6 +189,10 @@ class App(tk.Tk):
         self.is_gaming = False
         self.game_process = None
 
+        topbar = ttk.Frame(self)
+        topbar.pack(fill="x")
+        ttk.Button(topbar, text="Quit", command=self.quit_app).pack(side="right", padx=5, pady=5)
+
         self.container = ttk.Frame(self)
         self.container.pack(fill="both", expand=True)
 
@@ -229,6 +233,13 @@ class App(tk.Tk):
 
     def on_closing(self):
         self.client.close()
+        self.destroy()
+
+    def quit_app(self):
+        try:
+            self.client.close()
+        except Exception:
+            pass
         self.destroy()
 
     def set_title_user(self, username, gaming=False):
@@ -357,7 +368,15 @@ class LobbyFrame(ttk.Frame):
         self.refresh_players()
 
     def logout(self):
-        self.app.client.leave_room()
+        try:
+            self.app.client.send("quit")
+        except Exception:
+            pass
+        try:
+            self.app.client.close()
+        except Exception:
+            pass
+        self.app.client = UserClient()
         self.app.client.username = None
         self.app.set_title_user(None)
         self.app.show_frame("LoginFrame")
@@ -365,7 +384,7 @@ class LobbyFrame(ttk.Frame):
     def refresh_games(self):
         self.games_list.delete(0, tk.END)
         resp = self.app.client.list_games()
-        if resp.get("action") == "error":
+        if resp.get("action") == "error" or "data" not in resp or "games" not in resp.get("data", {}):
             messagebox.showerror("Error", str(resp))
             return
         self.games_data = {g["id"]: g for g in resp["data"]["games"]}
@@ -376,8 +395,8 @@ class LobbyFrame(ttk.Frame):
     def refresh_rooms(self):
         self.rooms_list.delete(0, tk.END)
         resp = self.app.client.list_rooms()
-        if resp.get("action") == "error":
-            messagebox.showerror("Error", str(resp))
+        if resp.get("action") != "list_rooms" or "data" not in resp or "rooms" not in resp.get("data", {}):
+            messagebox.showerror("Error", f"Room fetch failed: {resp}")
             return
         for r in resp["data"]["rooms"]:
             line = f"{r['id']} - game={r['game_id']} players={len(r['players'])} status={r['status']}"
@@ -438,10 +457,7 @@ class LobbyFrame(ttk.Frame):
         if not gid:
             messagebox.showwarning("Warning", "Select a game first")
             return
-        maxp = simpledialog.askinteger("Max players", "Max players:", minvalue=2, maxvalue=8)
-        if not maxp:
-            return
-        resp = self.app.client.create_room(gid, maxp)
+        resp = self.app.client.create_room(gid)
         if resp.get("action") == "error":
             messagebox.showerror("Error", str(resp))
             return
@@ -465,6 +481,7 @@ class RoomFrame(ttk.Frame):
     def __init__(self, parent, app: App):
         super().__init__(parent)
         self.app = app
+        self.refresh_job = None
 
         top = ttk.Frame(self)
         top.pack(fill="x", pady=5)
@@ -481,10 +498,11 @@ class RoomFrame(ttk.Frame):
         ttk.Button(btns, text="Leave Room", command=self.leave_room).grid(row=0, column=2, padx=5)
 
     def on_show(self):
-        self.refresh_room()
+        self.start_auto_refresh()
 
     def back_lobby(self):
         self.app.client.leave_room()
+        self.stop_auto_refresh()
         self.app.show_frame("LobbyFrame")
         if self.app.is_gaming:
             # if user leaves early, stop tracking
@@ -493,6 +511,7 @@ class RoomFrame(ttk.Frame):
 
     def leave_room(self):
         self.app.client.leave_room()
+        self.stop_auto_refresh()
         self.app.show_frame("LobbyFrame")
 
     def refresh_room(self):
@@ -516,6 +535,13 @@ class RoomFrame(ttk.Frame):
         for p in room["players"]:
             r = room["ready"].get(p, False)
             self.info_text.insert(tk.END, f"  - {p}: {'READY' if r else 'NOT READY'}\n")
+
+        # auto-launch if in_game and not already gaming
+        if room.get("status") == "in_game" and room.get("port") and not self.app.is_gaming:
+            host = SERVER_HOST
+            port = room["port"]
+            messagebox.showinfo("Game", f"Game started on {host}:{port}")
+            self.app.launch_game_client(room["game_id"], host, port)
 
     def ready(self):
         rid = self.app.client.current_room_id
@@ -575,6 +601,23 @@ class RoomFrame(ttk.Frame):
             self.app.launch_game_client(game_id, host, port)
         else:
             self.after(1000, lambda: self.poll_room_start(room_id, game_id))
+
+    def start_auto_refresh(self):
+        self.stop_auto_refresh()
+        self.refresh_room()
+        self.refresh_job = self.after(1000, self._auto_refresh)
+
+    def _auto_refresh(self):
+        self.refresh_room()
+        self.refresh_job = self.after(1000, self._auto_refresh)
+
+    def stop_auto_refresh(self):
+        if self.refresh_job is not None:
+            try:
+                self.after_cancel(self.refresh_job)
+            except Exception:
+                pass
+            self.refresh_job = None
 
 
 class RateFrame(ttk.Frame):

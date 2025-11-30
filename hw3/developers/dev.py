@@ -146,11 +146,6 @@ class DevClient:
         name = input(f"Game display name [{info.get('name', '')}]: ").strip() or info.get("name", "")
         description = input(f"Description [{info.get('description', '')}]: ").strip() or info.get("description", "")
         version = input(f"Version (blank to auto bump, 'use_info' to use game_info version {info.get('version', '')}): ").strip()
-        try:
-            max_players_input = input(f"Max players (default {info.get('max_players', 2)}): ").strip()
-            max_players = int(max_players_input or info.get("max_players", 2))
-        except ValueError:
-            max_players = info.get("max_players", 2)
 
         # Zip folder
         try:
@@ -166,7 +161,6 @@ class DevClient:
             "name": name,
             "description": description,
             "version": version,
-            "max_players": max_players,
             "zip_b64": zip_b64
         })
 

@@ -4,5 +4,8 @@
   },
   "user2": {
     "password": "user2"
+  },
+  "user3": {
+    "password": "user3"
   }
 }
