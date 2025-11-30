@@ -418,8 +418,8 @@ class LobbyFrame(ttk.Frame):
     def refresh_players(self):
         self.players_list.delete(0, tk.END)
         resp = self.app.client.list_players()
-        if resp.get("action") == "error":
-            messagebox.showerror("Error", str(resp))
+        if resp.get("action") != "list_players" or "data" not in resp or "players" not in resp.get("data", {}):
+            messagebox.showerror("Error", f"Players fetch failed: {resp}")
             return
         for p in resp["data"]["players"]:
             self.players_list.insert(tk.END, p["username"])

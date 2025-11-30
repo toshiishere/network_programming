@@ -225,10 +225,8 @@ class DevClient:
 1) List my games
 2) Upload / Update game
 3) Delete game
-4) Clean ALL games on server
-5) Shutdown server
-6) Logout
-7) Quit
+4) Logout
+5) Quit
 """)
                 choice = input("> ").strip()
 
@@ -239,14 +237,10 @@ class DevClient:
                 elif choice == "3":
                     self.delete_game()
                 elif choice == "4":
-                    self.admin_clean()
-                elif choice == "5":
-                    self.admin_shutdown()
-                elif choice == "6":
                     print(f"Logged out from {self.username}.\n")
                     self.logged_in = False
                     self.username = None
-                elif choice == "7":
+                elif choice == "5":
                     self.send("quit")
                     print("Goodbye.")
                     break
