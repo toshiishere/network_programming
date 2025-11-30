@@ -1,4 +1,3 @@
-# developers/games/rps/client_entry.py
 import argparse
 import socket
 import pygame
@@ -6,10 +5,10 @@ import sys
 import threading
 
 WIDTH, HEIGHT = 720, 480
-CHOICES = ["rock", "paper", "scissors"]
+CHOICES = ("rock", "paper", "scissors")
 
 
-def recv_line(sock):
+def recv_line(sock: socket.socket) -> str:
     buf = []
     while True:
         ch = sock.recv(1)
@@ -21,20 +20,27 @@ def recv_line(sock):
     return b"".join(buf).decode("utf-8")
 
 
-def send_line(sock, text: str):
+def send_line(sock: socket.socket, text: str):
     sock.sendall((text + "\n").encode("utf-8"))
 
 
 def parse_result(msg: str):
-    """Parse server result string into outcome + detail."""
+    """
+    Parse a result line like:
+      result outcome=win you=rock winning=paper counts=rock:1 paper:2 scissors:0
+    """
     if not msg.startswith("result"):
         return "unknown", msg
-    parts = msg.split(None, 2)
-    if len(parts) < 2:
-        return "unknown", msg
-    outcome = parts[1]
-    detail = parts[2] if len(parts) > 2 else ""
-    return outcome, detail
+    parts = msg.split()
+    outcome = "unknown"
+    detail_bits = []
+    for p in parts[1:]:
+        if p.startswith("outcome="):
+            outcome = p.split("=", 1)[1]
+        else:
+            detail_bits.append(p)
+    detail_text = " ".join(detail_bits) if detail_bits else msg
+    return outcome, detail_text
 
 
 def main():
@@ -60,44 +66,67 @@ def main():
         buttons.append((rect, ch))
 
     state = {
-        "result_text": "Waiting for opponent...",
-        "status_text": "Waiting for opponent...",
+        "player_idx": None,
+        "total_players": None,
+        "result_text": "Waiting for players...",
+        "status_text": "Waiting for players to join...",
         "can_choose": False,
         "waiting_for_result": False,
         "outcome": "pending",
+        "finished": False,
     }
+    stopped = threading.Event()
 
-    clock = pygame.time.Clock()
-
-    def wait_for_start():
+    def listener():
         try:
-            msg = recv_line(sock)
-            if msg.startswith("your_turn"):
-                state["status_text"] = "Your turn! Pick rock, paper or scissors."
-                state["result_text"] = state["status_text"]
-                state["can_choose"] = True
-            else:
-                state["status_text"] = f"Unexpected: {msg}"
-                state["result_text"] = state["status_text"]
+            while not stopped.is_set():
+                msg = recv_line(sock)
+                if msg.startswith("welcome"):
+                    parts = msg.split()
+                    if len(parts) >= 3:
+                        state["player_idx"] = int(parts[1])
+                        state["total_players"] = int(parts[2])
+                        state["status_text"] = (
+                            f"You are player {state['player_idx']}/{state['total_players']}"
+                        )
+                        state["result_text"] = "Waiting for the game to start..."
+                elif msg.startswith("start"):
+                    state["status_text"] = "Game starting! Choose once when prompted."
+                    state["result_text"] = "Waiting for prompt..."
+                elif msg.startswith("choose"):
+                    state["can_choose"] = True
+                    state["waiting_for_result"] = False
+                    state["status_text"] = "Pick rock, paper, or scissors."
+                    state["result_text"] = "Tap a button to lock in."
+                elif msg.startswith("result"):
+                    outcome, detail = parse_result(msg)
+                    state["result_text"] = detail
+                    state["status_text"] = detail
+                    state["outcome"] = outcome
+                    state["waiting_for_result"] = False
+                    state["can_choose"] = False
+                    state["finished"] = True
+                elif msg.startswith("error"):
+                    state["status_text"] = msg
+                    state["result_text"] = msg
+                    state["can_choose"] = False
+                    state["waiting_for_result"] = False
+                else:
+                    state["status_text"] = f"Server: {msg}"
         except Exception as exc:
-            state["status_text"] = f"Connection error: {exc}"
-            state["result_text"] = state["status_text"]
+            if not stopped.is_set():
+                if state.get("finished"):
+                    # Server closed after game end: keep final result text
+                    state["status_text"] = state.get("result_text", "Game finished")
+                else:
+                    state["status_text"] = f"Connection error: {exc}"
+                    state["result_text"] = state["status_text"]
+                state["can_choose"] = False
 
-    def wait_for_result():
-        try:
-            rmsg = recv_line(sock)
-            outcome, detail = parse_result(rmsg)
-            state["result_text"] = detail or rmsg
-            state["outcome"] = outcome
-        except Exception as exc:
-            state["result_text"] = f"Connection error: {exc}"
-        finally:
-            state["status_text"] = state["result_text"]
-            state["waiting_for_result"] = False
-
-    threading.Thread(target=wait_for_start, daemon=True).start()
+    threading.Thread(target=listener, daemon=True).start()
 
     running = True
+    clock = pygame.time.Clock()
     while running:
         clock.tick(30)
         for event in pygame.event.get():
@@ -109,50 +138,55 @@ def main():
                 for rect, ch in buttons:
                     if rect.collidepoint(x, y):
                         try:
-                            send_line(sock, ch)
+                            send_line(sock, f"choice {ch}")
                             state["can_choose"] = False
                             state["waiting_for_result"] = True
-                            state["status_text"] = "Waiting for result..."
-                            threading.Thread(target=wait_for_result, daemon=True).start()
+                            state["status_text"] = "Waiting for everyone to finish..."
+                            state["result_text"] = state["status_text"]
                         except Exception as exc:
                             state["result_text"] = f"Send failed: {exc}"
                         break
 
-        # background
-        screen.fill((18, 18, 40))
-        pygame.draw.rect(screen, (30, 30, 70), (30, 30, WIDTH - 60, HEIGHT - 60), border_radius=18)
+        screen.fill((12, 16, 40))
+        pygame.draw.rect(screen, (30, 32, 80), (30, 30, WIDTH - 60, HEIGHT - 60), border_radius=18)
 
         title_surf = big_font.render("Rock Paper Scissors", True, (255, 255, 255))
         screen.blit(title_surf, (WIDTH // 2 - title_surf.get_width() // 2, 40))
 
-        instr_surf = font.render(state["status_text"], True, (200, 220, 255))
+        subtitle = state.get("status_text", "")
+        instr_surf = font.render(subtitle, True, (210, 220, 255))
         screen.blit(instr_surf, (WIDTH // 2 - instr_surf.get_width() // 2, 120))
 
         for rect, ch in buttons:
-            pygame.draw.rect(screen, (80, 90, 200), rect, border_radius=12)
+            base_color = (80, 90, 200) if state["can_choose"] else (60, 60, 90)
+            pygame.draw.rect(screen, base_color, rect, border_radius=12)
             pygame.draw.rect(screen, (120, 140, 255), rect, width=3, border_radius=12)
             txt = font.render(ch.capitalize(), True, (255, 255, 255))
             screen.blit(txt, (rect.x + rect.width // 2 - txt.get_width() // 2,
                               rect.y + rect.height // 2 - txt.get_height() // 2))
 
-        # outcome ribbon
         color_map = {
             "win": (60, 200, 100),
             "lose": (220, 80, 80),
             "tie": (230, 200, 80),
+            "pending": (120, 120, 120),
         }
         banner_color = color_map.get(state.get("outcome"), (120, 120, 120))
         pygame.draw.rect(screen, banner_color, (60, 340, WIDTH - 120, 60), border_radius=10)
-        res_surf = font.render(state["result_text"], True, (0, 0, 0))
+        res_text = state.get("result_text", "")
+        res_surf = font.render(res_text, True, (0, 0, 0))
         screen.blit(res_surf, (WIDTH // 2 - res_surf.get_width() // 2, 350))
 
-        # legend
         legend = small_font.render("Outcome colors: green=win, yellow=tie, red=lose", True, (180, 180, 200))
         screen.blit(legend, (60, HEIGHT - 40))
 
         pygame.display.flip()
 
-    sock.close()
+    stopped.set()
+    try:
+        sock.close()
+    except Exception:
+        pass
     pygame.quit()
     sys.exit()
 

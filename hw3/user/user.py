@@ -222,6 +222,9 @@ class App(tk.Tk):
 
     def launch_game_client(self, game_id: str, host: str, port: int):
         """Launch pygame client_entry.py inside user/games/<game_id>/"""
+        room_frame = self.frames.get("RoomFrame")
+        if room_frame:
+            room_frame.stop_auto_refresh()
         game_folder = os.path.join(GAMES_DIR, game_id)
         client_entry = os.path.join(game_folder, "client_entry.py")
         if not os.path.exists(client_entry):
@@ -266,6 +269,9 @@ class App(tk.Tk):
             self.after(1000, self._poll_game_process)
             return
         # finished
+        room_frame = self.frames.get("RoomFrame")
+        if room_frame:
+            room_frame.stop_auto_refresh()
         self.is_gaming = False
         self.set_title_user(self.client.username)
         self.game_process = None
@@ -397,8 +403,7 @@ class LobbyFrame(ttk.Frame):
     def refresh_games(self):
         self.games_list.delete(0, tk.END)
         resp = self.app.client.list_games()
-        if resp.get("action") == "error" or "data" not in resp or "games" not in resp.get("data", {}):
-            messagebox.showerror("Error", str(resp))
+        if resp.get("action") != "list_games" or "data" not in resp or "games" not in resp.get("data", {}):
             return
         self.games_data = {g["id"]: g for g in resp["data"]["games"]}
         for g in self.games_data.values():
@@ -409,7 +414,6 @@ class LobbyFrame(ttk.Frame):
         self.rooms_list.delete(0, tk.END)
         resp = self.app.client.list_rooms()
         if resp.get("action") != "list_rooms" or "data" not in resp or "rooms" not in resp.get("data", {}):
-            messagebox.showerror("Error", f"Room fetch failed: {resp}")
             return
         for r in resp["data"]["rooms"]:
             line = f"{r['id']} - game={r['game_id']} players={len(r['players'])} status={r['status']}"
@@ -419,7 +423,6 @@ class LobbyFrame(ttk.Frame):
         self.players_list.delete(0, tk.END)
         resp = self.app.client.list_players()
         if resp.get("action") != "list_players" or "data" not in resp or "players" not in resp.get("data", {}):
-            messagebox.showerror("Error", f"Players fetch failed: {resp}")
             return
         for p in resp["data"]["players"]:
             self.players_list.insert(tk.END, p["username"])
@@ -680,9 +683,14 @@ class RateFrame(ttk.Frame):
             return
         messagebox.showinfo("Thank you", "Rating submitted")
         self.comment_text.delete("1.0", tk.END)
+        self.app.current_game_id = None
         self.app.show_frame("LobbyFrame")
 
     def back_lobby(self):
+        self.app.current_game_id = None
+        room_frame = self.app.frames.get("RoomFrame")
+        if room_frame:
+            room_frame.stop_auto_refresh()
         self.app.show_frame("LobbyFrame")
 
 

@@ -66,18 +66,26 @@ def send_json(sock: socket.socket, obj: Dict[str, Any]):
 
 
 def recv_json(sock: socket.socket) -> Dict[str, Any]:
-    buf = []
+    """
+    Receive a single JSON line. Tolerate decode errors by replacing invalid
+    bytes; raise ConnectionError on close.
+    """
+    buf_bytes = bytearray()
     while True:
         chunk = sock.recv(4096)
         if not chunk:
             raise ConnectionError("socket closed")
-        text = chunk.decode("utf-8")
-        buf.append(text)
-        if "\n" in text:
+        buf_bytes.extend(chunk)
+        if b"\n" in chunk:
             break
-    data = "".join(buf)
-    line, *_ = data.split("\n", 1)
-    return json.loads(line)
+    try:
+        text = buf_bytes.decode("utf-8", errors="replace")
+        line, *_ = text.split("\n", 1)
+        return json.loads(line)
+    except json.JSONDecodeError as exc:
+        raise ConnectionError(f"bad json: {exc}") from exc
+    except UnicodeDecodeError as exc:
+        raise ConnectionError(f"decode error: {exc}") from exc
 
 
 def next_room_id() -> int:
@@ -306,6 +314,9 @@ class ClientThread(threading.Thread):
                 try:
                     msg = recv_json(self.conn)
                 except ConnectionError:
+                    break
+                except Exception as exc:
+                    print(f"[WARN] failed to parse message from {self.addr}: {exc}")
                     break
                 action = msg.get("action")
                 data = msg.get("data", {})
