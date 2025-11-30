@@ -1,5 +1,7 @@
 {
   "rooms": [],
   "online_players": [],
-  "online_devs": []
+  "online_devs": [
+    "dev1"
+  ]
 }

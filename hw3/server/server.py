@@ -165,13 +165,12 @@ def migrate_games_metadata():
 
 
 def save_state_snapshot():
-    """Persist volatile server state such as rooms and online users."""
-    with lock:
-        snapshot = {
-            "rooms": list(rooms.values()),
-            "online_players": list(online_users["player"].keys()),
-            "online_devs": list(online_users["dev"].keys()),
-        }
+    """Persist snapshot of registered users and games (no runtime rooms/online info)."""
+    snapshot = {
+        "players": list(load_players().keys()),
+        "devs": list(load_devs().keys()),
+        "games": list(load_games().values()),
+    }
     save_json(STATE_JSON, snapshot)
     print(f"[INFO] state saved to {STATE_JSON}")
 

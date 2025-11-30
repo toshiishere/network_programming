@@ -10,7 +10,7 @@ import sys
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 
-SERVER_HOST = "127.0.0.1"
+SERVER_HOST = "140.113.17.11"
 SERVER_PORT = 5555
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
