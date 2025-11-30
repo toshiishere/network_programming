@@ -40,13 +40,23 @@ def recv_json(sock):
 class UserClient:
     def __init__(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.connect((SERVER_HOST, SERVER_PORT))
+        self.connect_error = None
+        try:
+            self.sock.connect((SERVER_HOST, SERVER_PORT))
+        except Exception as exc:
+            self.connect_error = exc
+            self.sock = None
         self.username = None
         self.current_room_id = None
 
     def send(self, action, data=None):
-        send_json(self.sock, {"action": action, "data": data or {}})
-        return recv_json(self.sock)
+        if not self.sock:
+            return {"action": "error", "reason": "connection_failed", "detail": str(self.connect_error)}
+        try:
+            send_json(self.sock, {"action": action, "data": data or {}})
+            return recv_json(self.sock)
+        except Exception as exc:
+            return {"action": "error", "reason": "connection_failed", "detail": str(exc)}
 
     # ---- auth ----
 
@@ -308,7 +318,10 @@ class LoginFrame(ttk.Frame):
             return
         resp = self.app.client.login(u, p)
         if resp.get("action") == "error":
-            messagebox.showerror("Login failed", str(resp))
+            if resp.get("reason") == "connection_failed":
+                messagebox.showerror("Login failed", f"Cannot connect to server: {resp.get('detail')}")
+            else:
+                messagebox.showerror("Login failed", str(resp))
         else:
             messagebox.showinfo("Login", "Logged in as player")
             self.app.set_title_user(u)

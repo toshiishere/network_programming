@@ -80,7 +80,13 @@ def main():
     parser.add_argument("--host", required=True)
     parser.add_argument("--port", required=True, type=int)
     parser.add_argument("--room", required=False)
+    parser.add_argument("--players", required=False, type=int, default=2)
     args = parser.parse_args()
+
+    target_players = max(2, int(args.players or 2))
+    if target_players != 2:
+        print(f"[CONNECT4] only 2 players supported, clamping {target_players} -> 2")
+        target_players = 2
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((args.host, args.port))
@@ -88,7 +94,7 @@ def main():
         print(f"[CONNECT4] listening on {args.host}:{args.port}")
 
         clients = []
-        while len(clients) < 2:
+        while len(clients) < target_players:
             conn, addr = s.accept()
             print(f"[CONNECT4] client connected {addr}")
             clients.append(conn)
