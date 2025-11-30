@@ -1,0 +1,8 @@
+{
+  "id": "battleship",
+  "name": "Battleship",
+  "description": "Classic Battleship duel: take turns firing coordinates to sink the fleet.",
+  "max_players": 2,
+  "min_players": 2,
+  "version": "1.0.0"
+}
