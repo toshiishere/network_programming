@@ -663,6 +663,8 @@ class RateFrame(ttk.Frame):
     def on_show(self):
         gid = self.app.current_game_id or "(none)"
         self.info_label.config(text=f"Game: {gid}")
+        self.rating_var.set(5)
+        self.comment_text.delete("1.0", tk.END)
 
     def submit(self):
         gid = self.app.current_game_id
@@ -671,13 +673,17 @@ class RateFrame(ttk.Frame):
             return
         rating = self.rating_var.get()
         comment = self.comment_text.get("1.0", tk.END).strip()
-        resp = self.app.client.rate_game(gid, rating, comment)
-        if resp.get("action") == "error":
-            messagebox.showerror("Error", str(resp))
-        else:
-            messagebox.showinfo("Thank you", "Rating submitted")
-            self.comment_text.delete("1.0", tk.END)
-            self.app.show_frame("LobbyFrame")
+        try:
+            resp = self.app.client.rate_game(gid, rating, comment)
+        except Exception as exc:
+            messagebox.showerror("Error", f"Failed to submit rating: {exc}")
+            return
+        if resp.get("action") != "ok":
+            messagebox.showerror("Error", f"Rating failed: {resp}")
+            return
+        messagebox.showinfo("Thank you", "Rating submitted")
+        self.comment_text.delete("1.0", tk.END)
+        self.app.show_frame("LobbyFrame")
 
     def back_lobby(self):
         self.app.show_frame("LobbyFrame")
