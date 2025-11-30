@@ -362,7 +362,20 @@ class CLIApp:
             print("-", p.get("username"))
 
     def create_room(self):
-        gid = input("Game ID: ").strip()
+        # List available games with numbers
+        resp_list = self.client.list_games()
+        games = resp_list.get("data", {}).get("games", []) if resp_list.get("action") == "list_games" else []
+        if not games:
+            print("No games available or failed to fetch games:", resp_list)
+            return
+        print("Select a game to create a room:")
+        for idx, g in enumerate(games, start=1):
+            print(f"{idx}) {g.get('id')} - {g.get('name')} (v{g.get('version')})")
+        choice = prompt_int("Number: ")
+        if choice is None or choice < 1 or choice > len(games):
+            print("Invalid selection.")
+            return
+        gid = games[choice - 1].get("id")
         resp = self.client.create_room(gid)
         if resp.get("action") == "error":
             print("Create room failed:", resp)

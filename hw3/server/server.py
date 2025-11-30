@@ -697,6 +697,16 @@ class ClientThread(threading.Thread):
 
         games = load_games()
         existing = games.get(game_id)
+        if existing and existing.get("author") != self.username:
+            self.send("error", {"reason": "game_id_taken", "detail": "game id already used by another developer"})
+            return
+        # validate required fields if game_info was present
+        required_fields = {"id", "name", "description", "version", "min_players", "max_players"}
+        if info:
+            missing = [f for f in required_fields if f not in info]
+            if missing:
+                self.send("error", {"reason": "bad_game_info", "detail": f"missing fields: {','.join(missing)}"})
+                return
         try:
             max_players = int(info.get("max_players", 2))
         except (TypeError, ValueError):
@@ -756,6 +766,13 @@ class ClientThread(threading.Thread):
         if game.get("author") != self.username:
             self.send("error", {"reason": "not_author"})
             return
+        # Check if any room is using this game
+        with lock:
+            active_rooms = [r for r in rooms.values() if r.get("game_id") == game_id]
+        if active_rooms:
+            self.send("error", {"reason": "game_in_use", "detail": "rooms exist for this game"})
+            return
+
         games.pop(game_id)
         save_games(games)
 

@@ -235,7 +235,7 @@ class DevClient:
             else:
                 print(f"=== Developer Menu (Logged in as {self.username}) ===")
                 print("""
-1) List my games
+1) List games
 2) Upload / Update game
 3) Delete game
 4) Logout
