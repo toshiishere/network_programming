@@ -535,8 +535,8 @@ class RoomFrame(ttk.Frame):
             return
         resp = self.app.client.get_room(rid)
         self.info_text.delete("1.0", tk.END)
-        if resp.get("action") == "error":
-            self.info_text.insert(tk.END, str(resp))
+        if resp.get("action") != "get_room" or "data" not in resp or "room" not in resp.get("data", {}):
+            self.info_text.insert(tk.END, f"Room fetch failed: {resp}\n")
             return
         room = resp["data"]["room"]
         self.info_text.insert(tk.END, f"Room ID: {room['id']}\n")
@@ -562,13 +562,10 @@ class RoomFrame(ttk.Frame):
             messagebox.showwarning("Warning", "Not in a room")
             return
         resp = self.app.client.get_room(rid)
-        if resp.get("action") != "get_room":
-            messagebox.showerror("Error", str(resp))
+        if resp.get("action") != "get_room" or "data" not in resp or "room" not in resp.get("data", {}):
+            messagebox.showerror("Error", f"Room fetch failed: {resp}")
             return
-        room = resp.get("data", {}).get("room")
-        if not room:
-            messagebox.showerror("Error", "Room not found")
-            return
+        room = resp["data"]["room"]
         game_id = room["game_id"]
 
         # first try ready: if need_update, download game
