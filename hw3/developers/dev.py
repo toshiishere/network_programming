@@ -6,7 +6,7 @@ import zipfile
 import io
 import json
 
-SERVER_HOST = "127.0.0.1"
+SERVER_HOST = "140.113.17.11"
 SERVER_PORT = 5555
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -174,6 +174,26 @@ class DevClient:
         resp = self.send("dev_delete_game", {"game_id": game_id})
         print(resp)
 
+    def admin_clean(self):
+        if not self.ensure_login():
+            return
+        confirm = input("Are you sure? This will delete ALL games on server (y/N): ").strip().lower()
+        if confirm != "y":
+            print("Cancelled.")
+            return
+        resp = self.send("admin_clean")
+        print(resp)
+
+    def admin_shutdown(self):
+        if not self.ensure_login():
+            return
+        confirm = input("Shutdown server now? (y/N): ").strip().lower()
+        if confirm != "y":
+            print("Cancelled.")
+            return
+        resp = self.send("admin_shutdown")
+        print(resp)
+
     # ------------- Main Loop -------------
 
     def run(self):
@@ -205,8 +225,10 @@ class DevClient:
 1) List my games
 2) Upload / Update game
 3) Delete game
-4) Logout
-5) Quit
+4) Clean ALL games on server
+5) Shutdown server
+6) Logout
+7) Quit
 """)
                 choice = input("> ").strip()
 
@@ -217,10 +239,14 @@ class DevClient:
                 elif choice == "3":
                     self.delete_game()
                 elif choice == "4":
+                    self.admin_clean()
+                elif choice == "5":
+                    self.admin_shutdown()
+                elif choice == "6":
                     print(f"Logged out from {self.username}.\n")
                     self.logged_in = False
                     self.username = None
-                elif choice == "5":
+                elif choice == "7":
                     self.send("quit")
                     print("Goodbye.")
                     break

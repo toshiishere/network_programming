@@ -33,6 +33,7 @@ online_users = {
     "dev": {}
 }
 shutdown_event = threading.Event()
+server_socket: socket.socket | None = None
 STATE_JSON = os.path.join(DB_DIR, "state.json")
 
 
@@ -175,6 +176,16 @@ def save_state_snapshot():
     print(f"[INFO] state saved to {STATE_JSON}")
 
 
+def request_shutdown():
+    print("[INFO] shutdown requested")
+    shutdown_event.set()
+    try:
+        if server_socket:
+            server_socket.close()
+    except Exception:
+        pass
+
+
 # ---------- game file handling ----------
 
 def store_uploaded_game(game_id: str, zip_bytes: bytes):
@@ -206,6 +217,28 @@ def zip_game_folder(game_id: str) -> bytes:
                 rel = os.path.relpath(full, game_dir)
                 zf.write(full, arcname=rel)
     return buf.getvalue()
+
+
+def clean_games_data():
+    """Delete all games from database and clear game folders and rooms."""
+    games = load_games()
+    if games:
+        print(f"[INFO] cleaning {len(games)} games from database")
+    save_games({})
+    # remove game folders
+    if os.path.isdir(GAMES_DIR):
+        for entry in os.listdir(GAMES_DIR):
+            path = os.path.join(GAMES_DIR, entry)
+            if os.path.isdir(path):
+                for root, dirs, files in os.walk(path, topdown=False):
+                    for name in files:
+                        os.remove(os.path.join(root, name))
+                    for name in dirs:
+                        os.rmdir(os.path.join(root, name))
+                os.rmdir(path)
+    # clear rooms
+    with lock:
+        rooms.clear()
 
 
 def start_game_server(game_id: str, room_id: int, player_count: int = 2) -> int:
@@ -307,6 +340,10 @@ class ClientThread(threading.Thread):
                     self.handle_dev_upload_game(data)
                 elif action == "dev_delete_game":
                     self.handle_dev_delete_game(data)
+                elif action == "admin_clean":
+                    self.handle_admin_clean()
+                elif action == "admin_shutdown":
+                    self.handle_admin_shutdown()
                 elif action == "quit":
                     self.send("ok", {"msg": "bye"})
                     break
@@ -721,6 +758,20 @@ class ClientThread(threading.Thread):
 
         self.send("ok", {"msg": "game_deleted"})
 
+    # ---------- admin ops ----------
+
+    def handle_admin_clean(self):
+        if not self.require_login(role="dev"):
+            return
+        clean_games_data()
+        self.send("ok", {"msg": "games_cleared"})
+
+    def handle_admin_shutdown(self):
+        if not self.require_login(role="dev"):
+            return
+        self.send("ok", {"msg": "server_shutting_down"})
+        request_shutdown()
+
 
 # ---------- server main ----------
 
@@ -729,6 +780,8 @@ def main():
     migrate_games_metadata()
     print(f"[INFO] server listening on {HOST}:{PORT}")
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        global server_socket
+        server_socket = s
         s.bind((HOST, PORT))
         s.listen()
 

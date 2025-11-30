@@ -3,3 +3,5 @@
 *.o
 /out
 /.vscode
+/hw3/user/games
+/hw3/server/database
