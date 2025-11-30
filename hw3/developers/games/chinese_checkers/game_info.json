@@ -1,0 +1,8 @@
+{
+  "id": "chinese_checkers",
+  "name": "Chinese Checkers (3-player)",
+  "description": "Three-player mini Chinese Checkers on a compact hex board. Move or jump to reach the opposite corner.",
+  "max_players": 3,
+  "min_players": 3,
+  "version": "1.0.0"
+}

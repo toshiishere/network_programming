@@ -20,7 +20,7 @@ DEVS_JSON = os.path.join(DB_DIR, "devs.json")
 PLAYERS_JSON = os.path.join(DB_DIR, "players.json")
 GAMES_JSON = os.path.join(DB_DIR, "games.json")
 
-HOST = "127.0.0.1"
+HOST = "140.113.17.11"
 PORT = 5555
 
 # ---------- in-memory state ----------
@@ -668,7 +668,8 @@ class ClientThread(threading.Thread):
             return
         games = load_games()
         my_games = [g for g in games.values() if g.get("author") == self.username]
-        self.send("dev_list_games", {"games": my_games})
+        all_games = list(games.values())
+        self.send("dev_list_games", {"my_games": my_games, "all_games": all_games})
 
     def handle_dev_upload_game(self, data: dict):
         if not self.require_login(role="dev"):

@@ -127,8 +127,21 @@ class DevClient:
             return
         resp = self.send("dev_list_games")
         print("\n=== Your Games ===")
-        for g in resp["data"]["games"]:
-            print(f"- {g['id']} [{g['version']}] {g['name']}: {g['description']}")
+        my_games = resp["data"].get("my_games", [])
+        all_games = resp["data"].get("all_games", [])
+        print("-> Yours:")
+        if my_games:
+            for g in my_games:
+                print(f"- {g['id']} [{g['version']}] {g['name']}: {g['description']}")
+        else:
+            print("  (none)")
+        print("\n-> All games:")
+        if all_games:
+            for g in all_games:
+                author = g.get("author", "")
+                print(f"- {g['id']} [{g['version']}] {g['name']} by {author}: {g['description']}")
+        else:
+            print("  (none)")
         print()
 
     def upload_game(self):
