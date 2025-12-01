@@ -8,7 +8,10 @@ SHIPS = [3, 2, 2]  # lengths of ships per player
 
 
 def send_line(sock: socket.socket, text: str):
-    sock.sendall((text + "\n").encode("utf-8"))
+    try:
+        sock.sendall((text + "\n").encode("utf-8"))
+    except Exception:
+        pass
 
 
 def recv_line(sock: socket.socket, timeout: float | None = None) -> str:
@@ -39,7 +42,7 @@ def place_ships() -> Tuple[List[List[str]], List[Dict]]:
     for length in SHIPS:
         placed = False
         attempts = 0
-        while not placed and attempts < 100:
+        while not placed and attempts < 300:
             attempts += 1
             horiz = random.choice([True, False])
             if horiz:
@@ -61,10 +64,6 @@ def place_ships() -> Tuple[List[List[str]], List[Dict]]:
     return board, ships
 
 
-def all_sunk(ships: List[Dict]) -> bool:
-    return all(s["coords"] == s["hits"] for s in ships)
-
-
 def process_shot(board: List[List[str]], ships: List[Dict], row: int, col: int) -> Tuple[str, int]:
     # returns (result, remaining_ships)
     if not (0 <= row < BOARD_SIZE and 0 <= col < BOARD_SIZE):
@@ -78,10 +77,7 @@ def process_shot(board: List[List[str]], ships: List[Dict], row: int, col: int) 
             if (row, col) in ship["coords"]:
                 ship["hits"].add((row, col))
                 sunk = ship["coords"] == ship["hits"]
-                if sunk:
-                    result = "sunk"
-                else:
-                    result = "hit"
+                result = "sunk" if sunk else "hit"
                 break
     else:
         board[row][col] = "O"
@@ -92,10 +88,7 @@ def process_shot(board: List[List[str]], ships: List[Dict], row: int, col: int) 
 
 def broadcast(clients: List[socket.socket], text: str):
     for c in clients:
-        try:
-            send_line(c, text)
-        except Exception:
-            pass
+        send_line(c, text)
 
 
 def wait_for_disconnects(clients: List[socket.socket], timeout: float = 30.0):
@@ -129,20 +122,31 @@ def main():
         clients: List[socket.socket] = []
         try:
             while len(clients) < target_players:
-                conn, addr = server.accept()
+                try:
+                    conn, addr = server.accept()
+                except Exception as exc:
+                    print(f"[BATTLESHIP] accept failed: {exc}")
+                    continue
                 idx = len(clients) + 1
-                conn.settimeout(25)
+                try:
+                    conn.settimeout(30)
+                except Exception:
+                    pass
                 send_line(conn, f"welcome {idx} 2 room={args.room}")
                 clients.append(conn)
                 print(f"[BATTLESHIP] player {idx} connected from {addr}")
 
-            # setup boards
-            boards: List[List[List[str]]] = []
-            fleets: List[List[Dict]] = []
-            for _ in range(target_players):
-                b, s = place_ships()
-                boards.append(b)
-                fleets.append(s)
+            try:
+                boards: List[List[List[str]]] = []
+                fleets: List[List[Dict]] = []
+                for _ in range(target_players):
+                    b, s = place_ships()
+                    boards.append(b)
+                    fleets.append(s)
+            except Exception as exc:
+                print(f"[BATTLESHIP] failed to place ships: {exc}")
+                broadcast(clients, "error setup_failed")
+                return
 
             start_line = f"start size={BOARD_SIZE} ships=" + ",".join(str(x) for x in SHIPS)
             broadcast(clients, start_line)
@@ -157,7 +161,7 @@ def main():
 
                 send_line(shooter, "your_turn")
                 try:
-                    line = recv_line(shooter, timeout=30)
+                    line = recv_line(shooter, timeout=45)
                 except Exception as exc:
                     print(f"[BATTLESHIP] player {current+1} disconnected/timeout: {exc}")
                     break

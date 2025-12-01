@@ -6,7 +6,10 @@ BOARD_SIZE_DEFAULT = 6
 
 
 def send_line(sock: socket.socket, text: str):
-    sock.sendall((text + "\n").encode("utf-8"))
+    try:
+        sock.sendall((text + "\n").encode("utf-8"))
+    except Exception:
+        pass
 
 
 def recv_line(sock: socket.socket) -> str:
@@ -49,10 +52,12 @@ def main():
             if msg.startswith("welcome"):
                 parts = msg.split()
                 if len(parts) >= 2:
-                    my_index = int(parts[1])
+                    try:
+                        my_index = int(parts[1])
+                    except ValueError:
+                        my_index = None
                 print(f"Connected as player {my_index}")
             elif msg.startswith("start"):
-                # parse size
                 tokens = msg.split()
                 for t in tokens:
                     if t.startswith("size="):
@@ -87,15 +92,17 @@ def main():
                     send_line(sock, f"fire {r} {c}")
                     break
             elif msg.startswith("shot"):
-                # shot player=1 row=0 col=0 result=hit remaining=2
                 info = {}
                 for part in msg.split()[1:]:
                     if "=" in part:
                         k, v = part.split("=", 1)
                         info[k] = v
                 shooter = info.get("player")
-                row = int(info.get("row", -1))
-                col = int(info.get("col", -1))
+                try:
+                    row = int(info.get("row", -1))
+                    col = int(info.get("col", -1))
+                except ValueError:
+                    row, col = -1, -1
                 result = info.get("result", "")
                 remaining = info.get("remaining", "")
                 if shooter == str(my_index):
@@ -114,6 +121,9 @@ def main():
                     print("You win!")
                 else:
                     print(f"Player {winner} wins.")
+                break
+            elif msg.startswith("error"):
+                print("Server error:", msg)
                 break
             else:
                 print("Server:", msg)

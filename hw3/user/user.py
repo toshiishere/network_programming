@@ -391,7 +391,15 @@ class CLIApp:
         if resp.get("action") == "error":
             print("Join failed:", resp)
             return
-        print("Joined room", rid)
+        room_info = self.client.get_room(rid)
+        if room_info.get("action") == "get_room":
+            room = room_info.get("data", {}).get("room", {})
+            players = room.get("players", [])
+            maxp = room.get("max_players", "N/A")
+            game_id = room.get("game_id", "?")
+            print(f"Joined room {rid} | game={game_id} players={len(players)}/{maxp}")
+        else:
+            print("Joined room", rid)
         self.room_menu()
 
     def show_room_info(self):
