@@ -1,0 +1,8 @@
+{
+  "id": "rps_cli",
+  "name": "Rock Paper Scissors CLI",
+  "description": "Simple 2-player CLI RPS game.",
+  "max_players": 2,
+  "min_players": 2,
+  "version": "1.0.0"
+}

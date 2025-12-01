@@ -8,6 +8,7 @@ import zipfile
 import io
 import subprocess
 import sys
+import time
 from typing import Dict, Any
 import signal
 
@@ -21,6 +22,9 @@ PLAYERS_JSON = os.path.join(DB_DIR, "players.json")
 GAMES_JSON = os.path.join(DB_DIR, "games.json")
 
 HOST = "140.113.17.11"
+# Allow overriding game bind/public host separately (defaults to HOST).
+GAME_BIND_HOST = os.environ.get("GAME_BIND_HOST", HOST)
+GAME_PUBLIC_HOST = os.environ.get("GAME_PUBLIC_HOST", GAME_BIND_HOST)
 PORT = 55455
 
 # ---------- in-memory state ----------
@@ -267,15 +271,18 @@ def start_game_server(game_id: str, room_id: int, player_count: int = 2) -> int:
         print(f"[WARN] server_entry.py not found for game {game_id}")
         return port
 
-    print(f"[INFO] starting game server {game_id} for room {room_id} on {HOST}:{port} players={player_count}")
+    bind_host = GAME_BIND_HOST
+    print(f"[INFO] starting game server {game_id} for room {room_id} on {bind_host}:{port} players={player_count}")
     subprocess.Popen([
         sys.executable,
         server_entry,
-        "--host", HOST,
+        "--host", bind_host,
         "--port", str(port),
         "--room", str(room_id),
         "--players", str(player_count),
     ])
+    # Give the subprocess a moment to bind before notifying clients.
+    time.sleep(0.3)
     return port
 
 
@@ -600,7 +607,7 @@ class ClientThread(threading.Thread):
             payload = {
                 "game_id": game_id,
                 "room_id": room_id,
-                "host": HOST,
+                "host": GAME_PUBLIC_HOST,
                 "port": port
             }
             self.send("game_started", payload)
