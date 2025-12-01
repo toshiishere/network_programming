@@ -47,6 +47,11 @@ class UserClient:
             self.sock = None
         self.username = None
         self.current_room_id = None
+        self.user_base = GAMES_DIR
+
+    def game_folder(self, game_id: str) -> str:
+        user_part = self.username or "_anon_"
+        return os.path.join(self.user_base, user_part, game_id)
 
     def send(self, action, data=None, expect=None):
         """
@@ -89,6 +94,7 @@ class UserClient:
         }, expect={"ok", "error"})
         if resp.get("action") != "error":
             self.username = username
+            os.makedirs(os.path.join(self.user_base, username), exist_ok=True)
         return resp
 
     # ---- lobby ----
@@ -129,14 +135,14 @@ class UserClient:
     # ---- game version + download ----
 
     def get_local_version(self, game_id: str) -> str:
-        path = os.path.join(GAMES_DIR, game_id, "version.txt")
+        path = os.path.join(self.game_folder(game_id), "version.txt")
         if not os.path.exists(path):
             return ""
         with open(path, "r", encoding="utf-8") as f:
             return f.read().strip()
 
     def set_local_version(self, game_id: str, version: str):
-        folder = os.path.join(GAMES_DIR, game_id)
+        folder = self.game_folder(game_id)
         os.makedirs(folder, exist_ok=True)
         path = os.path.join(folder, "version.txt")
         with open(path, "w", encoding="utf-8") as f:
@@ -152,7 +158,7 @@ class UserClient:
         zip_b64 = data["zip_b64"]
         version = data["version"]
         zip_bytes = base64.b64decode(zip_b64)
-        folder = os.path.join(GAMES_DIR, game_id)
+        folder = self.game_folder(game_id)
         if os.path.isdir(folder):
             for root, dirs, files in os.walk(folder, topdown=False):
                 for name in files:
@@ -333,6 +339,11 @@ class CLIApp:
             avg = g.get("avg_rating")
             avg_txt = f"{avg:.2f}" if avg is not None else "N/A"
             print(f"- {g.get('id')} v{g.get('version')} (min {g.get('min_players')} / max {g.get('max_players')}), rating {avg_txt}\n  {g.get('description', '')}")
+            reviews = g.get("reviews", [])
+            if reviews:
+                print("  Comments:")
+                for r in reviews:
+                    print(f"    - {r.get('user')}: {r.get('rating')} stars - {r.get('comment', '')}")
 
     def show_rooms(self):
         resp = self.client.list_rooms()
@@ -496,7 +507,7 @@ class CLIApp:
         self.prompt_rating(game_id)
 
     def launch_game_client(self, game_id: str, host: str, port: int):
-        game_folder = os.path.join(GAMES_DIR, game_id)
+        game_folder = self.client.game_folder(game_id)
         client_entry = os.path.join(game_folder, "client_entry.py")
         if not os.path.exists(client_entry):
             print(f"client_entry.py not found for game '{game_id}'")

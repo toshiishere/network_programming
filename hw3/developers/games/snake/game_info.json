@@ -1,0 +1,8 @@
+{
+  "id": "snake",
+  "name": "Snake Duel",
+  "description": "2-player snake on a 15x12 wrap grid. WASD controls; collision loses.",
+  "max_players": 2,
+  "min_players": 2,
+  "version": "1.0.0"
+}
