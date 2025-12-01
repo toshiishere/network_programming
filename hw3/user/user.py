@@ -10,7 +10,7 @@ import time
 from typing import Optional
 
 SERVER_HOST = "140.113.17.11"
-SERVER_PORT = 5555
+SERVER_PORT = 55455
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 GAMES_DIR = os.path.join(BASE_DIR, "games")

@@ -21,7 +21,7 @@ PLAYERS_JSON = os.path.join(DB_DIR, "players.json")
 GAMES_JSON = os.path.join(DB_DIR, "games.json")
 
 HOST = "140.113.17.11"
-PORT = 5555
+PORT = 55455
 
 # ---------- in-memory state ----------
 
