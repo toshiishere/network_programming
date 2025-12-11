@@ -46,4 +46,3 @@
     - start a child process and deal with connection(i don't know if we should assign a port to process or let the process to create the socket)
     - wait until the game is over, have user to rate the game, update to the game's review
     
-https://www.notion.so/Network-Programming-Final-2b4c9905bf8681ad9381d4cb4423382e
